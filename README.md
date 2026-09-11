@@ -156,8 +156,10 @@ side_prj/
 | `PORT` | 아니오 | 서버 포트. 기본 3000 |
 | `OPENAI_API_KEY` | **예** | AI 채팅 · 대응 시나리오 · 뉴스 브리핑 · 과거 뉴스 요약에 사용. 없으면 해당 기능만 오류가 나고 나머지는 동작해요 |
 | `TELEGRAM_CHANNELS` | 아니오 | 텔레그램 스크랩 기본 채널(쉼표 구분). 기본 `wowtv_official,FastStockNews` |
-| `TELEGRAM_BOT_TOKEN` | 아니오 | 리밸런싱 알림용 봇 토큰 (11장). 없으면 앱 내 배지만 동작 |
-| `TELEGRAM_CHAT_ID` | 아니오 | 알림을 받을 채팅 ID (11장) |
+| `TELEGRAM_BOT_TOKEN` | 아니오 | 리밸런싱 알림용 봇 토큰 (10장). 없으면 앱 내 배지만 동작 |
+| `TELEGRAM_CHAT_ID` | 아니오 | 알림을 받을 채팅 ID (10장) |
+| `KAKAO_REST_KEY` | 아니오 | 카카오톡 "나에게 보내기" 알림용 REST API 키 (11장) |
+| `KAKAO_CLIENT_SECRET` | 아니오 | 카카오 앱에서 Client Secret 을 켠 경우에만 |
 
 AI 모델명은 `server.js` 상단 `OPENAI_MODEL` 상수예요 (현재 `gpt-5.6-luna`). `.env` 를 바꾸면 서버를 재시작해야 반영돼요.
 
@@ -203,7 +205,9 @@ AI 모델명은 `server.js` 상단 `OPENAI_MODEL` 상수예요 (현재 `gpt-5.6-
 | `POST /api/chat` `{messages:[…]}` | OpenAI 채팅 프록시 | 없음 |
 | `GET/PUT /api/portfolio` | 포트폴리오 상태 읽기/부분 갱신 (`data/portfolio.json`) | — |
 | `GET /api/rebalance-check[?refresh=1]` | 보유 기준 드리프트·조정 신호·필요 매매 계산 (refresh 없으면 1시간 캐시) | 1시간 |
-| `POST /api/rebalance-notify` | 현재 점검 결과를 텔레그램으로 즉시 전송 | — |
+| `POST /api/rebalance-notify?channel=telegram\|kakao` | 현재 점검 결과를 즉시 전송 | — |
+| `GET /auth/kakao` → `/auth/kakao/callback` | 카카오 로그인(한 번) 후 토큰을 `data/kakao.json` 에 저장 | — |
+| `GET /api/kakao/status`, `POST /api/kakao/disconnect` | 카카오 연결 상태 / 연결 해제 | — |
 
 환율은 브라우저가 Frankfurter API(`api.frankfurter.dev`)를 직접 호출해요. 캐시는 서버 메모리에만 있어 재시작하면 비워져요.
 
@@ -252,8 +256,27 @@ AI 모델명은 `server.js` 상단 `OPENAI_MODEL` 상수예요 (현재 `gpt-5.6-
 
 동작 규칙: 서버가 **매일 16:30 KST**(국내 장 마감 후)에 점검하고, 조정 신호가 있을 때 **하루 한 번만** 알려요. 신호가 없으면 조용해요. 서버가 그 시각에 꺼져 있으면 그날은 건너뛰니 상시 운영은 2-4절(systemd)이나 1-4절(작업 스케줄러)을 참고해요. 봇을 설정하지 않아도 앱 내 빨간 점 배지는 동작해요.
 
-## 11. 보안 메모
+## 11. 리밸런싱 알림 설정 (카카오톡 "나에게 보내기")
+
+텔레그램 대신(또는 함께) 내 카카오톡 **"나와의 채팅"** 으로 알림을 받을 수 있어요. 사업자 등록·템플릿 심사 없이 개인 앱으로 되지만, 처음 한 번 카카오 로그인이 필요해요.
+
+콘솔(https://developers.kakao.com/console/app)에서 앱을 고른 뒤, 왼쪽 메뉴 기준으로:
+
+1. **앱 만들기**: 내 애플리케이션 → 애플리케이션 추가 (이름·회사명은 자유).
+2. **REST API 키·시크릿**: `[앱] > [플랫폼 키]`(또는 `[앱 설정] > [앱 키]`)에서 **REST API 키**를 복사해 `.env` 의 `KAKAO_REST_KEY` 에 넣어요. 같은 화면의 **REST API 키 > 클라이언트 시크릿**이 "사용" 상태면(새 콘솔은 기본 사용) 그 값도 `KAKAO_CLIENT_SECRET` 에 넣어요. 넣지 않으면 로그인 마지막 단계에서 `invalid_client` 오류가 나요.
+3. **리다이렉트 URI**: `[앱] > [플랫폼 키] > [REST API 키] > [리다이렉트 URI]`(구 콘솔: `[카카오 로그인] > [Redirect URI]`)에 `http://localhost:3000/auth/kakao/callback` 을 **한 글자도 다르지 않게** 등록해요 (포트를 바꿨다면 그 포트로).
+4. **카카오 로그인 켜기**: `[카카오 로그인] > [사용 설정]`에서 상태를 **ON**.
+5. **동의항목**: `[카카오 로그인] > [동의항목]`에서 `[접근권한] > [카카오톡 메시지 전송]`(talk_message)을 **선택 동의**로 설정하고 저장해요. 나에게 보내기는 비즈 앱 전환 없이 돼요.
+6. **웹 도메인**: `[앱] > [제품 링크 관리] > [웹 도메인]`(구 콘솔: `[플랫폼] > [Web]`)에 메시지 버튼 링크의 도메인을 등록해요. localhost 는 등록이 안 되므로 기본값인 `https://github.com` 을 등록하거나, `.env` 의 `KAKAO_LINK_URL` 을 원하는 공개 주소로 바꾸고 그 도메인을 등록해요.
+7. **연결**: 서버를 재시작하고 포트폴리오 → 실제 보유·리밸런싱에서 **"카카오 연결"** → 카카오 로그인·동의 → "연결됐어요" 화면이 뜨면 끝. **"카카오톡으로 보내기"** 로 테스트해요.
+
+자주 나는 오류: `KOE006`/`redirect_uri mismatch` → 3번 URI 오타(끝 슬래시, http/https, 포트). `invalid_client` → 2번 클라이언트 시크릿 누락. `KOE101`/`invalid scope` → 5번 동의항목 미설정. 전송 시 링크 관련 오류 → 6번 도메인 미등록.
+
+토큰은 `data/kakao.json` 에 저장되고 액세스 토큰(6시간)은 서버가 자동 갱신해요. 리프레시 토큰은 2개월 유효하며 알림이 나갈 때마다 연장되지만, 2개월 넘게 한 번도 알림이 없으면 만료돼 다시 "카카오 연결"이 필요해요. 메시지 본문은 카카오 제한(200자)에 맞춰 요약돼요. 텔레그램과 카카오가 둘 다 설정돼 있으면 두 곳 모두로 보내요.
+
+## 12. 보안 메모
 
 - `.env` 에는 API 키가 들어 있어요. `.gitignore` 에 포함돼 있지만, 폴더를 압축해 보낼 때는 **`.env` 를 빼고** 보내 주세요.
 - 폴더에 있던 `GPT API key.txt` 는 평문 키 파일이에요. 키는 이미 `.env` 에 있으니 삭제하는 게 안전해요 (`.gitignore` 에도 넣어 뒀어요).
 - 이 서버는 인증이 없어요. 외부 네트워크에 포트를 열지 말고, 원격에서 볼 때는 SSH 터널을 쓰세요.
+- `data/kakao.json` 에는 카카오 토큰이 들어 있어요. `data/` 는 git 에서 제외되지만, 폴더를 공유할 때 같이 보내지 마세요.

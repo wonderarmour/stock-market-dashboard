@@ -462,8 +462,21 @@
         <button type="button" class="pf-mini" id="r-today">오늘 리밸런싱 완료</button>
       </div>
       <p class="tg-hint" style="margin:6px 0 14px">목표 대비 <b>절대 밴드(%p)</b> 또는 <b>상대 밴드(목표 비중의 %)</b> 중 하나라도 넘으면 조정 신호예요. 정기 점검은 마지막 리밸런싱 후 정해진 일수가 지나면 알려 줘요(0이면 끄기). 업계에서 흔한 기본값은 5%p / 25% / 90일이에요.</p>
-      <div class="pf-wfoot"><button type="button" class="scenario-btn" id="h-save">저장하고 지금 점검하기</button><button type="button" class="pf-mini" id="h-notify">텔레그램으로 보내기</button><span class="meta" id="h-status"></span></div>
+      <div class="pf-wfoot"><button type="button" class="scenario-btn" id="h-save">저장하고 지금 점검하기</button><button type="button" class="pf-mini" id="h-notify">텔레그램으로 보내기</button><button type="button" class="pf-mini" id="h-kakao-send">카카오톡으로 보내기</button><button type="button" class="pf-mini" id="h-kakao-connect">카카오 연결</button><span class="meta" id="h-status"></span></div>
       <div id="h-result"></div>`;
+
+    const notifyVia = async (channel, label) => {
+      const st = holdingsEl.querySelector('#h-status');
+      st.textContent = `${label}으로 보내는 중...`;
+      try {
+        const res = await fetch(`/api/rebalance-notify?channel=${channel}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        st.textContent = `${label}으로 보냈어요`;
+      } catch (e) { st.textContent = `전송 실패: ${e.message}`; }
+    };
+    holdingsEl.querySelector('#h-kakao-send').addEventListener('click', () => notifyVia('kakao', '카카오톡'));
+    holdingsEl.querySelector('#h-kakao-connect').addEventListener('click', () => { window.open('/auth/kakao', '_blank'); });
 
     holdingsEl.querySelector('#h-equal').addEventListener('click', () => {
       const n = items.length || 1;
@@ -478,16 +491,7 @@
       await store.flush();
       loadCheck(true);
     });
-    holdingsEl.querySelector('#h-notify').addEventListener('click', async () => {
-      const st = holdingsEl.querySelector('#h-status');
-      st.textContent = '텔레그램으로 보내는 중...';
-      try {
-        const res = await fetch('/api/rebalance-notify', { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        st.textContent = '텔레그램으로 보냈어요';
-      } catch (e) { st.textContent = `전송 실패: ${e.message}`; }
-    });
+    holdingsEl.querySelector('#h-notify').addEventListener('click', () => notifyVia('telegram', '텔레그램'));
     loadCheck(false);
   }
   function updateTargetSum() {
@@ -527,9 +531,13 @@
     const banner = `<div class="h-banner ${d.triggered ? 'warn' : 'ok'}"><b>${d.triggered ? '리밸런싱 점검이 필요해요' : '목표 범위 안에 있어요'}</b>${d.reasons.length ? '<ul>' + d.reasons.map((r) => `<li>${r}</li>`).join('') + '</ul>' : ''}</div>`;
     const rows = d.rows.map((r) => `<tr class="${r.bandHit ? 'hit' : ''}"><td><b>${r.label}</b><div class="meta">${r.symbol}</div></td><td>${r.error ? `<span class="meta">${r.error}</span>` : fmtMoney(r.price, r.currency)}</td><td>${fmtMoney(r.valueKRW ?? r.value, r.valueKRW != null ? 'KRW' : r.currency)}</td><td>${r.curPct == null ? '-' : r.curPct.toFixed(1) + '%'}</td><td>${r.target.toFixed(1)}%</td><td class="${r.drift > 0 ? 'up' : r.drift < 0 ? 'down' : ''}">${fmtPct(r.drift)}p <span class="meta">(${fmtPct(r.relDrift, 0)})</span></td><td>${r.bandHit ? '<span class="h-flag">조정</span>' : '<span class="meta">유지</span>'}</td></tr>`).join('');
     const trades = d.trades.length ? `<h3 class="pf-roll-title">목표 비중으로 돌아가려면</h3><ul class="h-trades">${d.trades.map((t) => `<li><b>${t.label}</b> ${t.action === 'buy' ? '<span class="up">매수</span>' : '<span class="down">매도</span>'} ${t.shares}${/-USD$/.test(t.symbol) ? '' : '주'} <span class="meta">≈ ${fmtMoney(t.amount, t.currency)}</span></li>`).join('')}</ul>` : '';
-    const tg = d.telegramConfigured
-      ? `텔레그램 알림 켜짐 · ${d.schedule} 자동 점검${d.lastAlertDate ? ` · 마지막 알림 ${d.lastAlertDate}` : ''}${d.lastAlertError ? ` · 최근 전송 오류: ${d.lastAlertError}` : ''}`
-      : `텔레그램 알림이 꺼져 있어요. .env 에 TELEGRAM_BOT_TOKEN 과 TELEGRAM_CHAT_ID 를 넣고 서버를 재시작하면 ${d.schedule}에 자동으로 알려 줘요. (앱 내 빨간 점 배지는 지금도 동작해요)`;
+    const k = d.kakao || {};
+    const kakaoLine = !k.configured ? '카카오톡: .env 에 KAKAO_REST_KEY 를 넣고 서버를 재시작한 뒤 "카카오 연결"을 눌러 주세요'
+      : k.connected ? `카카오톡: 연결됨 (${k.connectedAt ? k.connectedAt.slice(0, 10) + ' 연결' : ''}${k.refreshExpiresAt ? `, ${k.refreshExpiresAt.slice(0, 10)}까지 유효 · 알림이 나갈 때마다 자동 연장` : ''})`
+      : '카카오톡: 아직 연결되지 않았어요. "카카오 연결" 버튼을 눌러 한 번 로그인하면 "나와의 채팅"으로 알림이 와요';
+    const tgLine = d.telegramConfigured ? '텔레그램: 켜짐' : '텔레그램: 꺼짐 (.env 에 TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)';
+    const tg = `${d.schedule}에 자동 점검하고, 조정 신호가 있으면 연결된 채널로 하루 한 번 알려 줘요. 앱 내 빨간 점 배지는 항상 동작해요.<br>${tgLine} · ${kakaoLine}${d.lastAlertDate ? `<br>마지막 알림 ${d.lastAlertDate}` : ''}${d.lastAlertError ? `<br>최근 전송 오류: ${d.lastAlertError}` : ''}`;
+    const kc = holdingsEl.querySelector('#h-kakao-connect'); if (kc) kc.textContent = k.connected ? '카카오 다시 연결' : '카카오 연결';
     out.innerHTML = banner + `<div class="table-wrap"><table class="pf-table"><thead><tr><th>종목</th><th>현재가</th><th>평가액</th><th>현재 비중</th><th>목표</th><th>드리프트</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="meta" style="margin:8px 0">총 평가액 ${fmtMoney(d.totalValue, 'KRW')}${d.fxUsdKrw ? ` (달러 자산은 ${d.fxUsdKrw.toFixed(1)}원/달러로 환산)` : ''} · ${new Date(d.asOf).toLocaleString('ko-KR')} 기준${d.daysSince != null ? ` · 마지막 리밸런싱 후 ${d.daysSince}일` : ''}</div>` + trades + `<div class="tg-hint" style="margin:12px 0 0">${tg}</div>`;
   }

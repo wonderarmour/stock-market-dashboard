@@ -371,7 +371,71 @@ async function sendTelegram(text) {
   return true;
 }
 
-// Daily check at 16:30 KST (after the KRX close), Telegram alert once per day when triggered.
+// ---- KakaoTalk "나에게 보내기" (Kakao Developers message API, personal use) ----
+// One-time browser login stores a refresh token in data/kakao.json; access
+// tokens (6h) are refreshed automatically. Text template is capped at 200 chars.
+const KAKAO_FILE = path.join(DATA_DIR, 'kakao.json');
+const kakaoRedirectUri = () => `http://localhost:${PORT}/auth/kakao/callback`;
+function readKakao() { try { return JSON.parse(fs.readFileSync(KAKAO_FILE, 'utf8')); } catch { return null; } }
+function writeKakao(tok) { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(KAKAO_FILE, JSON.stringify(tok, null, 2), 'utf8'); }
+function postForm(url, fields, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const body = new URLSearchParams(fields).toString();
+    const req = https.request(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8', 'Content-Length': Buffer.byteLength(body), ...headers } }, (res) => {
+      let data = ''; res.setEncoding('utf8');
+      res.on('data', (c) => (data += c));
+      res.on('end', () => { try { resolve({ status: res.statusCode, body: JSON.parse(data || '{}') }); } catch (e) { reject(new Error('Kakao 응답 파싱 실패: ' + data.slice(0, 120))); } });
+    });
+    req.on('error', reject); req.write(body); req.end();
+  });
+}
+async function kakaoExchange(fields) {
+  const { status, body } = await postForm('https://kauth.kakao.com/oauth/token', {
+    client_id: process.env.KAKAO_REST_KEY, ...(process.env.KAKAO_CLIENT_SECRET ? { client_secret: process.env.KAKAO_CLIENT_SECRET } : {}), ...fields,
+  });
+  if (status >= 400 || body.error) throw new Error(body.error_description || body.error || `Kakao HTTP ${status}`);
+  const prev = readKakao() || {};
+  const tok = {
+    access_token: body.access_token,
+    refresh_token: body.refresh_token || prev.refresh_token,
+    expires_at: Date.now() + (body.expires_in || 21600) * 1000,
+    refresh_expires_at: body.refresh_token_expires_in ? Date.now() + body.refresh_token_expires_in * 1000 : prev.refresh_expires_at,
+    connected_at: prev.connected_at || new Date().toISOString(),
+  };
+  writeKakao(tok);
+  return tok;
+}
+async function kakaoAccessToken() {
+  if (!process.env.KAKAO_REST_KEY) throw new Error('KAKAO_REST_KEY 가 .env 에 없어요');
+  const tok = readKakao();
+  if (!tok || !tok.refresh_token) throw new Error('카카오가 연결되지 않았어요. 실제 보유 화면에서 "카카오 연결"을 눌러 주세요');
+  if (tok.expires_at - Date.now() > 5 * 60 * 1000) return tok.access_token;
+  if (tok.refresh_expires_at && tok.refresh_expires_at < Date.now()) throw new Error('카카오 로그인이 만료됐어요. 다시 연결해 주세요');
+  return (await kakaoExchange({ grant_type: 'refresh_token', refresh_token: tok.refresh_token })).access_token;
+}
+function kakaoText(check) {
+  const head = `[리밸런싱 점검 ${check.asOf.slice(0, 10)}] ${check.triggered ? '조정 필요' : '목표 범위 안'}`;
+  const drift = check.rows.filter((r) => r.bandHit).map((r) => `${r.label} ${r.drift > 0 ? '+' : ''}${r.drift.toFixed(1)}%p`).join(', ');
+  const trades = check.trades.map((t) => `${t.label} ${t.action === 'buy' ? '매수' : '매도'} ${t.shares}`).join(', ');
+  let text = head + (drift ? `\n밴드 초과: ${drift}` : '') + (check.calendarDue ? '\n정기 점검 시점이에요' : '') + (trades ? `\n조정안: ${trades}` : '');
+  return text.length > 200 ? text.slice(0, 197) + '…' : text;
+}
+async function sendKakao(check) {
+  const token = await kakaoAccessToken();
+  // Kakao only allows link URLs on domains registered in the app console, and
+  // localhost can't be registered — so the button points at a configurable public URL.
+  const linkUrl = process.env.KAKAO_LINK_URL || 'https://github.com/wonderarmour/stock-market-dashboard';
+  const template = { object_type: 'text', text: kakaoText(check), link: { web_url: linkUrl, mobile_web_url: linkUrl }, button_title: '자세히 보기' };
+  const { status, body } = await postForm('https://kapi.kakao.com/v2/api/talk/memo/default/send', { template_object: JSON.stringify(template) }, { Authorization: `Bearer ${token}` });
+  if (status >= 400 || (body.result_code != null && body.result_code !== 0)) throw new Error(body.msg || body.error_description || `Kakao HTTP ${status} (code ${body.code ?? body.result_code})`);
+  return true;
+}
+function kakaoStatus() {
+  const tok = readKakao();
+  return { configured: !!process.env.KAKAO_REST_KEY, connected: !!(tok && tok.refresh_token), connectedAt: tok?.connected_at || null, refreshExpiresAt: tok?.refresh_expires_at ? new Date(tok.refresh_expires_at).toISOString() : null, redirectUri: kakaoRedirectUri() };
+}
+
+// Daily check at 16:30 KST (after the KRX close); alerts once per day when triggered.
 const CHECK_HOUR_KST = 16, CHECK_MIN_KST = 30;
 function kstNow() { return new Date(Date.now() + 9 * 3600 * 1000); }
 async function scheduledCheck() {
@@ -380,9 +444,17 @@ async function scheduledCheck() {
   state.lastCheck = check;
   const today = kstNow().toISOString().slice(0, 10);
   state.lastScheduledDate = today;
-  if (check.triggered && state.lastAlertDate !== today && process.env.TELEGRAM_BOT_TOKEN) {
-    try { await sendTelegram(formatAlert(check)); state.lastAlertDate = today; state.lastAlertError = null; }
-    catch (e) { state.lastAlertError = e.message; }
+  if (check.triggered && state.lastAlertDate !== today) {
+    const errors = [];
+    let sent = false;
+    if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
+      try { await sendTelegram(formatAlert(check)); sent = true; } catch (e) { errors.push('텔레그램: ' + e.message); }
+    }
+    if (kakaoStatus().connected) {
+      try { await sendKakao(check); sent = true; } catch (e) { errors.push('카카오: ' + e.message); }
+    }
+    if (sent) state.lastAlertDate = today;
+    state.lastAlertError = errors.length ? errors.join(' / ') : null;
   }
   writeState(state);
   return check;
@@ -445,18 +517,43 @@ const server = http.createServer(async (req, res) => {
         state.lastCheck = await runRebalanceCheck(state);
         writeState(state);
       }
-      json(200, { ...state.lastCheck, telegramConfigured: !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID), lastAlertDate: state.lastAlertDate || null, lastAlertError: state.lastAlertError || null, schedule: `매일 ${CHECK_HOUR_KST}:${String(CHECK_MIN_KST).padStart(2, '0')} KST` });
+      json(200, { ...state.lastCheck, telegramConfigured: !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID), kakao: kakaoStatus(), lastAlertDate: state.lastAlertDate || null, lastAlertError: state.lastAlertError || null, schedule: `매일 ${CHECK_HOUR_KST}:${String(CHECK_MIN_KST).padStart(2, '0')} KST` });
     } catch (e) { json(502, { error: e.message }); }
     return;
   }
   if (url.pathname === '/api/rebalance-notify' && req.method === 'POST') {
+    const channel = url.searchParams.get('channel') || 'telegram';
     try {
       const state = readState();
       const check = state.lastCheck || (await runRebalanceCheck(state));
-      await sendTelegram(formatAlert(check));
+      if (channel === 'kakao') await sendKakao(check); else await sendTelegram(formatAlert(check));
       state.lastAlertDate = kstNow().toISOString().slice(0, 10); state.lastAlertError = null; writeState(state);
-      json(200, { ok: true });
+      json(200, { ok: true, channel });
     } catch (e) { json(502, { error: e.message }); }
+    return;
+  }
+
+  // Kakao OAuth: /auth/kakao -> Kakao login -> /auth/kakao/callback stores tokens.
+  if (url.pathname === '/auth/kakao') {
+    if (!process.env.KAKAO_REST_KEY) { json(500, { error: 'KAKAO_REST_KEY 가 .env 에 없어요' }); return; }
+    const q = new URLSearchParams({ client_id: process.env.KAKAO_REST_KEY, redirect_uri: kakaoRedirectUri(), response_type: 'code', scope: 'talk_message' });
+    res.writeHead(302, { Location: `https://kauth.kakao.com/oauth/authorize?${q}` }); res.end();
+    return;
+  }
+  if (url.pathname === '/auth/kakao/callback') {
+    const page = (title, body) => { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(`<!doctype html><meta charset="utf-8"><title>${title}</title><body style="font-family:Pretendard,system-ui,sans-serif;padding:40px;max-width:560px"><h2>${title}</h2><p>${body}</p><p><a href="/">대시보드로 돌아가기</a></p></body>`); };
+    const err = url.searchParams.get('error');
+    if (err) { page('카카오 연결에 실패했어요', `${err}: ${url.searchParams.get('error_description') || ''}`); return; }
+    try {
+      await kakaoExchange({ grant_type: 'authorization_code', redirect_uri: kakaoRedirectUri(), code: url.searchParams.get('code') || '' });
+      page('카카오톡이 연결됐어요', '이제 리밸런싱 알림이 "나와의 채팅"으로 와요. 이 창은 닫아도 돼요.');
+    } catch (e) { page('카카오 연결에 실패했어요', e.message); }
+    return;
+  }
+  if (url.pathname === '/api/kakao/status') { json(200, kakaoStatus()); return; }
+  if (url.pathname === '/api/kakao/disconnect' && req.method === 'POST') {
+    try { fs.unlinkSync(KAKAO_FILE); } catch {}
+    json(200, { ok: true });
     return;
   }
 
