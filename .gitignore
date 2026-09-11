@@ -1,0 +1,6 @@
+.env
+*.log
+node_modules/
+GPT API key.txt
+.DS_Store
+Thumbs.db

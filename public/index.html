@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>환율 · 지수 대시보드</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/toss/tossface/dist/tossface.css">
+<style>
+  /* ---- TDS tokens (design.md, light canonical) --------------------------- */
+  .viz-root {
+    color-scheme: light;
+    --blue-500: oklch(0.624 0.176 254);
+    --blue-600: oklch(0.522 0.176 257);
+    --blue-50:  oklch(0.965 0.020 250);
+    --grey-900: oklch(0.234 0.030 254);
+    --grey-700: oklch(0.452 0.028 253);
+    --grey-400: oklch(0.752 0.016 251);
+    --grey-300: oklch(0.840 0.012 248);
+    --grey-200: oklch(0.913 0.008 247);
+    --grey-100: oklch(0.957 0.005 247);
+    --grey-50:  oklch(0.978 0.003 247);
+    --red-500:  oklch(0.628 0.218 22);
+    --green-500: oklch(0.493 0.143 154);
+    --orange-500: oklch(0.748 0.183 56);
+    --fg-tertiary:   oklch(0.155 0.060 261 / 0.58);
+    --fg-quaternary: oklch(0.155 0.060 261 / 0.28);
+    --line-subtle:   oklch(0 0 0 / 0.08);
+    --overlay-scrim: oklch(0 0 0 / 0.56);
+    --press:         oklch(0 0 0 / 0.26);
+    --shadow-1: 0 1px 2px oklch(0.155 0.060 261 / 0.04), 0 1px 1px oklch(0.155 0.060 261 / 0.04);
+    --shadow-2: 0 4px 12px oklch(0.155 0.060 261 / 0.06), 0 1px 2px oklch(0.155 0.060 261 / 0.04);
+    --shadow-3: 0 12px 32px oklch(0.155 0.060 261 / 0.10), 0 2px 6px oklch(0.155 0.060 261 / 0.06);
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    --dur-fast: 120ms; --dur-base: 200ms; --dur-slow: 320ms;
+    --r-s: 8px; --r-m: 12px; --r-l: 14px; --r-xl: 16px; --r-2xl: 20px; --r-3xl: 24px; --r-full: 999px;
+    --disabled: 0.30;
+
+    /* semantic aliases used across the app */
+    --surface-1:      white;
+    --page-plane:     white;
+    --text-primary:   var(--grey-900);
+    --text-secondary: var(--grey-700);
+    --text-muted:     var(--fg-tertiary);
+    --gridline:       var(--grey-200);
+    --baseline:       var(--grey-200);
+    --toss-blue:      var(--blue-500);
+    --toss-blue-soft: var(--blue-50);
+    --up:             var(--red-500);
+    --down:           var(--blue-500);
+    --series-1:       var(--blue-500);
+    --border:         var(--grey-200);
+    --chip-bg:        var(--grey-100);
+    --shadow:         none;
+  }
+  /* No official dark alias table exists (design.md Known Gaps); these are
+     cool-navy derived approximations kept for OS dark mode. */
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1:      oklch(0.25 0.02 254);
+      --page-plane:     oklch(0.19 0.015 254);
+      --text-primary:   oklch(0.96 0.005 247);
+      --text-secondary: oklch(0.78 0.012 250);
+      --text-muted:     oklch(0.96 0.005 247 / 0.58);
+      --gridline:       oklch(0.33 0.02 254);
+      --baseline:       oklch(0.33 0.02 254);
+      --toss-blue-soft: oklch(0.32 0.06 254);
+      --chip-bg:        oklch(0.30 0.02 254);
+      --border:         oklch(0.33 0.02 254);
+      --line-subtle:    oklch(1 0 0 / 0.10);
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1:      oklch(0.25 0.02 254);
+    --page-plane:     oklch(0.19 0.015 254);
+    --text-primary:   oklch(0.96 0.005 247);
+    --text-secondary: oklch(0.78 0.012 250);
+    --text-muted:     oklch(0.96 0.005 247 / 0.58);
+    --gridline:       oklch(0.33 0.02 254);
+    --baseline:       oklch(0.33 0.02 254);
+    --toss-blue-soft: oklch(0.32 0.06 254);
+    --chip-bg:        oklch(0.30 0.02 254);
+    --border:         oklch(0.33 0.02 254);
+    --line-subtle:    oklch(1 0 0 / 0.10);
+  }
+
+  /* ---- base ------------------------------------------------------------- */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page-plane);
+    font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", "Apple SD Gothic Neo", "Noto Sans KR", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    letter-spacing: -0.005em;
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  button, input, textarea { font-family: inherit; letter-spacing: inherit; }
+  button { cursor: pointer; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px 24px 80px; }
+  [hidden] { display: none !important; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  header { margin-bottom: 8px; }
+  header .eyebrow { font-size: 12px; font-weight: 500; line-height: 1.4; color: var(--text-muted); margin: 0 0 4px; letter-spacing: 0; }
+  header h1 { font-size: 28px; font-weight: 700; line-height: 1.3; margin: 0 0 8px; letter-spacing: -0.02em; }
+  header p { margin: 0 0 16px; color: var(--text-muted); font-size: 13px; }
+  #subtitle { margin: 0 0 16px; color: var(--text-muted); font-size: 13px; }
+
+  /* tab (inline): 2.5px brand underline */
+  .tabs { display: flex; gap: 4px; margin: 0 0 20px; border-bottom: 1px solid var(--gridline); }
+  .tab-btn {
+    padding: 10px 14px; border: none; background: transparent; color: var(--text-muted);
+    font-size: 16px; font-weight: 600; border-bottom: 2.5px solid transparent; margin-bottom: -1px;
+    transition: color var(--dur-base) var(--ease), border-color var(--dur-base) var(--ease);
+  }
+  .tab-btn.active { color: var(--text-primary); border-bottom-color: var(--toss-blue); }
+
+  /* segmented control: grey-100 track, selected white + shadow-1 */
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .range-selector, .subtabs { display: inline-flex; gap: 2px; padding: 4px; border-radius: var(--r-m); background: var(--chip-bg); }
+  .subtabs { margin: 0 0 20px; }
+  .range-btn, .subtab-btn {
+    padding: 7px 14px; border-radius: 10px; border: none; background: transparent; color: var(--text-secondary);
+    font-size: 13px; font-weight: 600; line-height: 1.25;
+    transition: background var(--dur-base) var(--ease), color var(--dur-base) var(--ease), box-shadow var(--dur-base) var(--ease);
+  }
+  .subtab-btn { font-size: 15px; padding: 8px 16px; }
+  .range-btn.active, .subtab-btn.active { background: var(--surface-1); color: var(--text-primary); box-shadow: var(--shadow-1); }
+  .range-btn.disabled { opacity: var(--disabled); cursor: default; }
+
+  /* buttons: primary = single brand CTA per screen (pill), secondary = grey-100 */
+  .scenario-btn, .btn-primary {
+    height: 40px; padding: 0 18px; border-radius: var(--r-full); border: none;
+    background: var(--toss-blue); color: white; font-size: 15px; font-weight: 600; line-height: 1.25;
+    transition: box-shadow var(--dur-fast) var(--ease);
+  }
+  .scenario-btn:active, .btn-primary:active { box-shadow: inset 0 0 0 999px var(--press); }
+  .scenario-btn:disabled, .btn-primary:disabled { opacity: var(--disabled); cursor: default; }
+  .btn-secondary, .pf-mini, .era-close, .tg-controls button, #pf-equal {
+    height: 40px; padding: 0 16px; border-radius: var(--r-m); border: none;
+    background: var(--chip-bg); color: var(--text-primary); font-size: 15px; font-weight: 600; line-height: 1.25;
+    transition: box-shadow var(--dur-fast) var(--ease);
+  }
+  .btn-secondary:active, .pf-mini:active, .era-close:active, .tg-controls button:active { box-shadow: inset 0 0 0 999px var(--press); }
+  .pf-mini { height: 32px; padding: 0 12px; border-radius: 10px; font-size: 13px; margin-right: 4px; }
+  .pf-mini.danger { color: var(--red-500); }
+  #pf-equal { height: 32px; padding: 0 12px; border-radius: 10px; font-size: 13px; }
+
+  /* text-field: 48px, r-m, grey-100 resting + grey-200 border, focus white + 1.5px blue */
+  .tf, #pf-input, .tg-controls input, #chat-input, .pf-save input, .param-row input, .weights-row input, .pf-wrow input[type=number] {
+    border: 1px solid var(--gridline); border-radius: var(--r-m); background: var(--chip-bg); color: var(--text-primary);
+    font-size: 15px; padding: 0 12px; height: 48px; outline: none;
+    transition: background var(--dur-base) var(--ease), border-color var(--dur-base) var(--ease);
+  }
+  .tf:focus, #pf-input:focus, .tg-controls input:focus, #chat-input:focus, .pf-save input:focus, .param-row input:focus, .weights-row input:focus, .pf-wrow input[type=number]:focus {
+    background: var(--surface-1); border-color: var(--toss-blue); box-shadow: inset 0 0 0 0.5px var(--toss-blue);
+  }
+  ::placeholder { color: var(--fg-quaternary); }
+  .param-row input, .weights-row input, .pf-wrow input[type=number] { height: 36px; width: 68px; padding: 0 10px; text-align: right; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; border-radius: 10px; }
+  .pf-save input { height: 36px; width: 170px; font-size: 13px; border-radius: 10px; }
+
+  .section { margin-top: 32px; }
+  .section-title { font-size: 20px; font-weight: 700; line-height: 1.35; margin: 0 0 12px; letter-spacing: -0.015em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+
+  /* card: flat white, hairline border, r-xl */
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-xl);
+    padding: 20px 20px 12px; position: relative;
+  }
+  .card .label { font-size: 17px; font-weight: 600; line-height: 1.45; color: var(--text-primary); margin-bottom: 0; letter-spacing: -0.01em; }
+  .card .sub { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-bottom: 12px; letter-spacing: 0; }
+  .card .stat-row { display: flex; align-items: baseline; gap: 10px; margin-bottom: 2px; flex-wrap: wrap; }
+  .card .value { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.3; font-variant-numeric: tabular-nums; }
+  .card .delta { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .card .delta.up   { color: var(--up); }
+  .card .delta.down { color: var(--down); }
+  .card .asof { font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--text-muted); margin-bottom: 10px; font-variant-numeric: tabular-nums; }
+  .card .asof .up   { color: var(--up); font-weight: 600; }
+  .card .asof .down { color: var(--down); font-weight: 600; }
+  .chart-box { position: relative; width: 100%; height: 120px; }
+  svg.chart { width: 100%; height: 100%; overflow: visible; display: block; }
+  .chart .line { fill: none; stroke: var(--line-color, var(--series-1)); stroke-width: 2px; stroke-linejoin: round; stroke-linecap: round; }
+  .chart .area { fill: var(--line-color, var(--series-1)); opacity: 0.08; }
+  .chart .baseline { stroke: var(--baseline); stroke-width: 1px; }
+  .chart .hover-dot { fill: var(--line-color, var(--series-1)); stroke: var(--surface-1); stroke-width: 2.5px; opacity: 0; }
+  .chart .hover-line { stroke: var(--grey-400); stroke-width: 1px; stroke-dasharray: 3 3; opacity: 0; }
+  .card.trend-up   { --line-color: var(--up); }
+  .card.trend-down { --line-color: var(--down); }
+  /* tooltip: grey-900 surface, white label, shadow-2 */
+  .tooltip {
+    position: absolute; pointer-events: none; background: var(--grey-900); color: white;
+    font-size: 12px; font-weight: 500; line-height: 1.4; padding: 6px 10px; border-radius: var(--r-s);
+    white-space: nowrap; opacity: 0; transform: translate(-50%, -120%); z-index: 5; box-shadow: var(--shadow-2);
+    font-variant-numeric: tabular-nums; transition: opacity var(--dur-fast) var(--ease);
+  }
+  .card .error { color: var(--red-500); font-size: 13px; padding: 20px 0; }
+  .loading { color: var(--text-muted); font-size: 13px; padding: 20px 0; }
+
+  /* news */
+  .news-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .news-status { font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--text-muted); }
+  .news-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+  .news-card {
+    display: flex; flex-direction: column; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: var(--r-xl); overflow: hidden; text-decoration: none; color: inherit;
+    transition: box-shadow var(--dur-fast) var(--ease);
+  }
+  .news-card:active { box-shadow: inset 0 0 0 999px var(--press); }
+  .news-thumb { position: relative; aspect-ratio: 16/9; background: var(--chip-bg); flex: none; overflow: hidden; }
+  .news-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+  .news-body { padding: 14px 16px 16px; }
+  .news-meta { display: flex; gap: 8px; font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--text-muted); margin-bottom: 6px; }
+  .news-source { color: var(--toss-blue); font-weight: 600; }
+  .brief-box { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-3xl); padding: 20px 24px; font-size: 15px; line-height: 1.6; }
+  .brief-box .md-li { padding: 4px 0 4px 18px; }
+  .brief-box .md-li::before { left: 2px; top: 4px; }
+  .brief-box .error { color: var(--red-500); font-size: 13px; }
+  .news-title { font-size: 15px; font-weight: 600; line-height: 1.45; letter-spacing: -0.01em; margin-bottom: 6px; }
+  .news-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; letter-spacing: 0; }
+
+  .tg-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tg-controls input { flex: 1; min-width: 220px; }
+  .tg-controls button { height: 48px; }
+  .tg-hint { font-size: 13px; color: var(--text-muted); margin: -4px 0 14px; letter-spacing: 0; line-height: 1.5; }
+  .tg-channel { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-3xl); padding: 20px 24px; margin-bottom: 16px; }
+  .tg-channel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+  .tg-channel-title { font-size: 17px; font-weight: 600; }
+  .tg-channel-link { font-size: 13px; color: var(--toss-blue); text-decoration: none; font-weight: 600; }
+  .tg-empty { font-size: 13px; color: var(--text-muted); padding: 8px 0; }
+  .tg-day { margin-top: 10px; }
+  .tg-day-label { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
+  .tg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .tg-item { margin: 0; cursor: zoom-in; }
+  .tg-item img { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: var(--r-m); background: var(--chip-bg); display: block; }
+  .tg-item figcaption { font-size: 12px; color: var(--text-muted); margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; letter-spacing: 0; }
+
+  .param-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 16px; }
+  .param-row label { font-size: 13px; font-weight: 600; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 6px; letter-spacing: 0; }
+  .weights-panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-3xl); padding: 6px 24px; margin-bottom: 20px; }
+  .weights-panel summary { cursor: pointer; font-size: 15px; font-weight: 600; padding: 12px 0; list-style: none; }
+  .weights-panel summary::before { content: '▸ '; color: var(--toss-blue); }
+  .weights-panel[open] summary::before { content: '▾ '; }
+  .weights-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 6px 0 14px; }
+  .weights-row label { font-size: 13px; font-weight: 600; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 6px; letter-spacing: 0; }
+  .weights-doc { border-top: 1px solid var(--gridline); padding: 6px 0 16px; font-size: 15px; line-height: 1.5; color: var(--text-secondary); }
+  .weights-doc h4 { margin: 16px 0 4px; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+  .weights-doc p { margin: 0; }
+  .weights-doc b { color: var(--text-primary); font-weight: 600; }
+
+  .pf-add { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 14px; }
+  .pf-search { position: relative; flex: 1; min-width: 220px; }
+  #pf-input { width: 100%; }
+  .pf-add .scenario-btn { height: 48px; }
+  .pf-results { position: absolute; left: 0; right: 0; top: calc(100% + 4px); background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-m); box-shadow: var(--shadow-2); z-index: 10; overflow: hidden; }
+  .pf-result { padding: 10px 12px; cursor: pointer; font-size: 15px; display: flex; justify-content: space-between; gap: 10px; }
+  .pf-result:hover { background: var(--chip-bg); }
+  .pf-result .sym { font-weight: 600; }
+  .pf-result .meta { color: var(--text-muted); font-size: 12px; white-space: nowrap; letter-spacing: 0; }
+  .card .pf-remove { position: absolute; top: 12px; right: 12px; border: none; background: var(--chip-bg); color: var(--text-secondary); border-radius: var(--r-s); width: 28px; height: 28px; font-size: 14px; line-height: 1; }
+  .card .pf-remove:hover { background: var(--red-500); color: white; }
+
+  /* chip: pill, white + hairline; off = disabled opacity */
+  .pf-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; font-weight: 600; }
+  .pf-chip { height: 34px; border: 1px solid var(--gridline); background: var(--surface-1); color: var(--text-primary); border-radius: var(--r-full); padding: 0 12px; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; transition: box-shadow var(--dur-fast) var(--ease), opacity var(--dur-base) var(--ease); }
+  .pf-chip:hover { border-color: var(--grey-400); }
+  .pf-chip:active { box-shadow: inset 0 0 0 999px var(--press); }
+  .pf-chip.off { opacity: var(--disabled); text-decoration: line-through; }
+  .pf-chip.off i { background: var(--grey-400) !important; }
+  .pf-legend-hint { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-left: auto; letter-spacing: 0; }
+  .pf-weights { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px 24px; margin-bottom: 12px; font-size: 13px; }
+  .pf-wrow { display: grid; grid-template-columns: 110px 1fr 68px auto auto; align-items: center; gap: 8px; font-weight: 600; }
+  .pf-wrow .sym { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pf-wrow input[type=range] { width: 100%; accent-color: var(--toss-blue); cursor: pointer; }
+  .pf-weights .meta { color: var(--text-muted); font-weight: 500; font-size: 12px; letter-spacing: 0; }
+  .pf-wfoot { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .pf-stats { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0 0 14px; padding: 12px 16px; border-radius: var(--r-l); background: var(--chip-bg); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .pf-stats .k { color: var(--text-muted); margin-right: 8px; }
+  .pf-stats b { font-size: 17px; font-weight: 700; }
+  .pf-stats .up { color: var(--up); } .pf-stats .down { color: var(--down); }
+  .pf-manage { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--gridline); font-size: 13px; }
+  .pf-manage > .meta { color: var(--text-muted); font-size: 12px; margin-right: 4px; letter-spacing: 0; }
+  .pf-mchip { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 6px 0 12px; border-radius: var(--r-full); background: var(--surface-1); border: 1px solid var(--gridline); }
+  .pf-mchip .meta { color: var(--text-muted); font-size: 12px; letter-spacing: 0; }
+  .pf-mremove { border: none; background: transparent; color: var(--text-muted); width: 24px; height: 24px; border-radius: 50%; font-size: 14px; line-height: 1; }
+  .pf-mremove:hover { background: var(--red-500); color: white; }
+  .pf-roll-title { font-size: 13px; font-weight: 600; margin: 14px 0 6px; color: var(--text-secondary); }
+  .pf-save { display: inline-flex; gap: 6px; align-items: center; }
+  .table-wrap { overflow-x: auto; }
+  .pf-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .pf-table th { text-align: left; font-size: 12px; color: var(--text-muted); font-weight: 500; padding: 8px 10px; border-bottom: 1px solid var(--gridline); white-space: nowrap; letter-spacing: 0; }
+  .pf-table td { padding: 10px; border-bottom: 1px solid var(--gridline); vertical-align: middle; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .pf-table td .meta { font-size: 12px; color: var(--text-muted); font-weight: 500; white-space: normal; letter-spacing: 0; }
+  .pf-table td.up { color: var(--up); font-weight: 600; } .pf-table td.down { color: var(--down); font-weight: 600; }
+  .pf-table td.best { background: var(--toss-blue-soft); border-radius: 6px; }
+  .pf-table tr.current td:first-child b { color: var(--toss-blue); }
+  .pf-table td.act { text-align: right; }
+  .pf-name-edit { cursor: text; border-bottom: 1px dashed var(--grey-400); padding: 0 2px; outline: none; }
+  .pf-name-edit:hover { border-bottom-color: var(--toss-blue); }
+  .pf-name-edit:focus { background: var(--toss-blue-soft); border-bottom: 1.5px solid var(--toss-blue); border-radius: 4px; }
+  .pf-chip i, .pf-tip i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  .pf-chip .meta, .pf-tip .meta { color: var(--text-muted); font-weight: 500; font-size: 12px; letter-spacing: 0; margin-left: 4px; }
+  .pf-combined-box { position: relative; width: 100%; height: 320px; }
+  .cchart { width: 100%; height: 100%; display: block; overflow: visible; }
+  .cchart .grid-line { stroke: var(--gridline); stroke-width: 1; }
+  .cchart .zero { stroke: var(--grey-400); stroke-width: 1; }
+  .cchart .tick { fill: var(--text-muted); font-size: 11px; font-family: inherit; }
+  .cchart .cline { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+  .cchart .endlab { font-size: 11px; font-weight: 600; font-family: inherit; }
+  .cchart .hover-line { stroke: var(--grey-400); stroke-width: 1; stroke-dasharray: 3 3; }
+  .pf-tip { transform: none; white-space: nowrap; line-height: 1.5; text-align: left; }
+  .pf-tip .meta { color: white; opacity: 0.7; }
+
+  .analog-box:empty { display: none; }
+  .analog-box { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-3xl); padding: 20px 24px; margin-bottom: 16px; }
+  .analog-title { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-bottom: 4px; letter-spacing: 0; }
+  .analog-now { font-size: 15px; line-height: 1.5; margin-bottom: 12px; font-variant-numeric: tabular-nums; }
+  .analog-warn { color: var(--orange-500); font-size: 13px; margin-top: 4px; }
+  .analog-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+  .analog-item { border-radius: var(--r-l); padding: 12px 14px; background: var(--chip-bg); transition: box-shadow var(--dur-fast) var(--ease); }
+  .analog-item.best { background: var(--toss-blue-soft); }
+  .analog-rank { font-size: 12px; font-weight: 600; color: var(--toss-blue); margin-bottom: 4px; letter-spacing: 0; }
+  .analog-name { font-size: 15px; font-weight: 600; margin-bottom: 6px; letter-spacing: -0.01em; }
+  .analog-meta { font-size: 12px; color: var(--text-secondary); line-height: 1.5; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+  .analog-after { font-size: 13px; margin-top: 8px; line-height: 1.5; letter-spacing: 0; }
+  .analog-ensemble { margin-top: 12px; padding: 12px 14px; border-radius: var(--r-l); background: var(--toss-blue-soft); font-size: 15px; line-height: 1.5; }
+  .card.clickable, .analog-item[data-era-start] { cursor: pointer; }
+  .analog-item[data-era-start]:active, .card.clickable:active { box-shadow: inset 0 0 0 999px var(--press); }
+
+  /* dialog: r-2xl, 24px padding, shadow-3, scrim */
+  #era-modal { position: fixed; inset: 0; background: var(--overlay-scrim); z-index: 60; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .era-card { width: 720px; max-width: 100%; max-height: 90vh; overflow-y: auto; background: var(--surface-1); color: var(--text-primary); border-radius: var(--r-2xl); padding: 24px; box-shadow: var(--shadow-3); }
+  .era-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+  .era-title { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.45; }
+  .era-meta { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-top: 2px; letter-spacing: 0; }
+  .era-close { flex: none; }
+  .era-body { font-size: 15px; line-height: 1.5; }
+  .md-h { font-weight: 700; margin-top: 10px; }
+  .md-li { padding-left: 14px; position: relative; }
+  .md-li::before { content: '•'; position: absolute; left: 2px; color: var(--toss-blue); }
+  .md-gap { height: 8px; }
+  .chat-msg.assistant .md-h:first-child { margin-top: 0; }
+  .era-sources { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--gridline); font-size: 12px; color: var(--text-muted); line-height: 1.6; letter-spacing: 0; }
+  .era-sources a { color: var(--toss-blue); text-decoration: none; }
+
+  #lightbox { position: fixed; inset: 0; background: oklch(0 0 0 / 0.85); z-index: 50; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  #lightbox img { max-width: 100%; max-height: 90vh; border-radius: var(--r-m); }
+  #lightbox .lb-bar { position: absolute; top: 16px; right: 16px; display: flex; gap: 8px; }
+  #lightbox .lb-bar a, #lightbox .lb-bar button { height: 40px; display: inline-flex; align-items: center; border: none; border-radius: var(--r-m); padding: 0 14px; background: oklch(1 0 0 / 0.15); color: white; font-size: 15px; font-weight: 600; text-decoration: none; }
+
+  /* chat widget (floating: shadow allowed) */
+  #chat-toggle {
+    position: fixed; bottom: 24px; right: 24px; width: 56px; height: 56px; border-radius: 50%;
+    background: var(--toss-blue); color: white; border: none; font-size: 24px; font-family: Tossface, "Pretendard Variable", Pretendard, sans-serif;
+    box-shadow: var(--shadow-3); z-index: 20; transition: box-shadow var(--dur-fast) var(--ease);
+  }
+  #chat-toggle:active { box-shadow: var(--shadow-3), inset 0 0 0 999px var(--press); }
+  #chat-panel {
+    position: fixed; bottom: 92px; right: 24px; width: 380px; max-width: calc(100vw - 32px); height: 520px; max-height: calc(100vh - 120px);
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-2xl); box-shadow: var(--shadow-3);
+    display: flex; flex-direction: column; overflow: hidden; z-index: 20;
+  }
+  #chat-header { padding: 14px 16px; border-bottom: 1px solid var(--gridline); font-size: 17px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; }
+  #chat-header .status { font-size: 12px; font-weight: 500; color: var(--text-muted); letter-spacing: 0; }
+  #chat-messages { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+  /* bubble: theirs grey-200 r14/14/14/4, mine blue r14/14/4/14 */
+  .chat-msg { max-width: 85%; padding: 10px 14px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .chat-msg.user { align-self: flex-end; background: var(--toss-blue); color: white; border-radius: 14px 14px 4px 14px; }
+  .chat-msg.assistant { align-self: flex-start; background: var(--grey-200); color: var(--text-primary); border-radius: 14px 14px 14px 4px; }
+  .chat-msg.system-note { align-self: center; color: var(--text-muted); font-size: 12px; letter-spacing: 0; }
+  .chat-msg.error { align-self: flex-start; background: transparent; color: var(--red-500); border: 1px solid var(--red-500); border-radius: 14px 14px 14px 4px; }
+  #chat-input-row { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--gridline); }
+  #chat-input { flex: 1; resize: none; height: auto; min-height: 44px; padding: 11px 12px; font-size: 14px; }
+  #chat-send { height: 44px; padding: 0 16px; border-radius: var(--r-m); border: none; background: var(--toss-blue); color: white; font-size: 15px; font-weight: 600; }
+  #chat-send:active { box-shadow: inset 0 0 0 999px var(--press); }
+  #chat-send:disabled { opacity: var(--disabled); cursor: default; }
+</style>
+</head>
+<body>
+<div class="viz-root wrap">
+  <header>
+    <p class="eyebrow">마켓 대시보드</p>
+    <h1>오늘의 시장</h1>
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="market">시장</button>
+      <button class="tab-btn" data-tab="news">오늘</button>
+      <button class="tab-btn" data-tab="events">과거</button>
+      <button class="tab-btn" data-tab="portfolio">포트폴리오</button>
+    </nav>
+  </header>
+
+  <div id="page-market">
+    <p id="subtitle">불러오는 중이에요</p>
+    <div class="toolbar">
+      <div id="range-selector" class="range-selector"></div>
+      <button id="scenario-btn" class="scenario-btn">삼성전자 AI 대응 시나리오</button>
+    </div>
+    <div id="sections"></div>
+  </div>
+
+  <div id="page-events" hidden>
+    <details class="weights-panel">
+      <summary>유사도 기준 설정 · 가중치 조절과 기준 설명</summary>
+      <div class="weights-row">
+        <label>형태 <input id="w-shape" type="number" min="0" max="100" step="5" value="40">%</label>
+        <label>수준 <input id="w-level" type="number" min="0" max="100" step="5" value="30">%</label>
+        <label>변동성 국면 <input id="w-vol" type="number" min="0" max="100" step="5" value="15">%</label>
+        <label>진입 흐름 <input id="w-run" type="number" min="0" max="100" step="5" value="15">%</label>
+        <span class="tg-hint" style="margin:0">합이 100이 아니어도 자동으로 맞춰요. 값을 바꾸면 결과가 바로 다시 정렬돼요.</span>
+      </div>
+      <div class="weights-doc">
+        <h4>이 기능이 하는 일</h4>
+        <p>"지금 나스닥이 최근 고점(또는 저점)에서 출발한 뒤 걸어온 길"을 과거 각 이벤트가 같은 출발점에서 같은 일수 동안 걸어온 길과 비교해 가장 닮은 사례를 찾아요. 비교는 항상 <b>같은 길이의 구간</b>끼리, 출발점 가격을 0%로 맞춘 <b>%-경로</b>로 해요.</p>
+
+        <h4>1. 형태 (기본 40%) · 모양이 닮았는지</h4>
+        <p>두 가지 상관계수의 평균이에요. <b>(a) 누적 경로 상관</b>: 출발점 대비 %-경로끼리의 피어슨 상관. 시작점을 ±3거래일 움직여 가장 잘 맞는 정렬을 택하기 때문에 고점/저점 날짜가 며칠 어긋나도 불이익이 없어요. <b>(b) 5일 수익률 상관</b>: 경로를 5거래일 단위 증감으로 바꾼 뒤의 상관. 누적 경로는 랜덤워크 성격이라 아무 두 구간이나 상관이 높게 나오는 <i>가짜 상관</i>(Phillips 1986)이 흔한데, 증감 시계열은 정상성이 있어 이를 걸러 줘요. (a)만 높고 (b)가 0 근처면 "큰 흐름은 비슷하지만 리듬은 다르다"는 뜻이에요.</p>
+
+        <h4>2. 수준 (기본 30%) · 낙폭/상승폭의 크기와 속도가 닮았는지</h4>
+        <p>두 %-경로 사이의 <b>DTW(동적 시간 왜곡) 거리</b>예요. 점대점 거리(RMSE)와 달리 시간축을 국소적으로 늘리고 줄여(전체 길이의 10% 밴드 안에서) 가장 잘 겹치는 정렬을 찾기 때문에, 같은 급락이 3일 빠르거나 늦게 왔다고 크게 다르게 보지 않아요. 거리는 후보·무작위 구간 전체의 중앙값 대비로 점수화해(중앙값이면 50점) 기간 길이나 시장 국면에 따라 스케일이 흔들리지 않게 했어요.</p>
+
+        <h4>3. 변동성 국면 (기본 15%) · 공포의 강도가 닮았는지</h4>
+        <p>비교 시점의 <b>20거래일 실현변동성</b>(일간 로그수익률 표준편차의 연율화)을 로그 비율로 비교해요. 같은 −10%라도 하루 −5%가 두 번 나온 패닉과 두 달간 야금야금 흘러내린 조정은 성격이 다르고, 이후 전개도 통계적으로 달라요. 변동성이 3배 차이 나면 0점이에요.</p>
+
+        <h4>4. 진입 흐름 (기본 15%) · 어떤 상태에서 시작됐는지</h4>
+        <p>출발점(고점/저점) <b>직전 12개월 수익률</b>이에요. 1년간 +80% 오른 뒤의 −10%(과열 해소)와 +5% 오른 뒤의 −10%(추세 이탈)는 다른 사건이에요. 밸류에이션·금리 같은 거시 변수를 대신하는 가장 단순한 대리변수예요.</p>
+
+        <h4>점수 해석 보조 장치</h4>
+        <p><b>무작위 구간 대비 백분위</b>: 후보가 50개면 그중 하나는 우연히도 잘 맞아요. 그래서 전체 역사에서 같은 길이의 임의 구간 120개를 뽑아 같은 점수를 매기고, 1위 사례가 그 분포에서 어디에 있는지 보여줘요. 95 이상일 때만 "우연 이상"으로 읽어 주세요. <b>상위 5개 앙상블</b>: 1위 사례 하나가 아니라 상위 5개의 "같은 시점 이후 60거래일" 변화의 중앙값과 범위를 보여줘요. 아날로그 분석에서는 단일 사례보다 앙상블 분포가 훨씬 안정적이에요.</p>
+
+        <h4>남아 있는 한계</h4>
+        <p>가격 경로만 보고 금리·실적·밸류에이션은 반영하지 않아요. 출발점 이후 기간이 짧으면(10거래일 미만) 모든 지표가 불안정해요. 과거 사례 수가 적어(수십 건) 통계적 검정력이 낮고, 어떤 가중치도 "정답"은 아니에요. 그래서 직접 바꿔 보며 결과가 얼마나 민감한지 확인하는 용도로 쓰는 게 가장 좋아요.</p>
+      </div>
+    </details>
+    <nav class="subtabs">
+      <button class="subtab-btn active" data-subtab="drawdown">조정</button>
+      <button class="subtab-btn" data-subtab="rally">상승</button>
+    </nav>
+    <div id="sub-drawdown">
+    <section class="section" style="margin-top:0">
+      <div class="news-head">
+        <h2 class="section-title" style="margin:0" id="drawdown-title">나스닥 조정 이벤트 (고점 대비 −10% 이상)</h2>
+        <span class="news-status" id="drawdown-status"></span>
+      </div>
+      <p class="tg-hint">나스닥 종합지수(^IXIC) 1971년 이후 전체 일봉에서 직전 고점 대비 기준 % 이상 하락한 구간을 찾아요. 구간은 이전 고점을 회복하거나, 저점 대비 종료 기준 % 반등(새 국면)하면 끝나요. 알려진 사건은 이름으로, 확인되지 않은 구간은 낙폭 기준으로만 표시하고, 현재 흐름과 가장 유사한 과거 사례를 함께 보여줘요.</p>
+      <div class="param-row">
+        <label>고점 대비 하락 기준 <input id="drawdown-trigger" type="number" min="1" max="90" step="1" value="10">%</label>
+        <label>종료: 저점 대비 반등 <input id="drawdown-end" type="number" min="1" max="200" step="1" value="20">%</label>
+        <button id="drawdown-btn" class="scenario-btn">조정 이벤트 분석</button>
+      </div>
+      <div class="analog-box" id="drawdown-analog"></div>
+      <div class="grid" id="drawdown-list"></div>
+    </section>
+    </div>
+
+    <div id="sub-rally" hidden>
+    <section class="section" style="margin-top:0">
+      <div class="news-head">
+        <h2 class="section-title" style="margin:0" id="rally-title">나스닥 상승장 이벤트 (저점 대비 +20% 이상)</h2>
+        <span class="news-status" id="rally-status"></span>
+      </div>
+      <p class="tg-hint">직전 저점 대비 기준 % 이상 상승한 구간을 찾아요. 구간은 그 고점에서 종료 기준 % 조정이 나오면 끝나요. 알려진 랠리는 이름으로 표시하고, 현재 흐름과 가장 유사한 과거 랠리를 함께 보여줘요.</p>
+      <div class="param-row">
+        <label>저점 대비 상승 기준 <input id="rally-trigger" type="number" min="1" max="500" step="1" value="20">%</label>
+        <label>종료: 고점 대비 조정 <input id="rally-end" type="number" min="1" max="90" step="1" value="10">%</label>
+        <button id="rally-btn" class="scenario-btn">상승장 이벤트 분석</button>
+      </div>
+      <div class="analog-box" id="rally-analog"></div>
+      <div class="grid" id="rally-list"></div>
+    </section>
+    </div>
+  </div>
+
+  <div id="page-news" hidden>
+    <section class="section" style="margin-top:0">
+      <div class="news-head"><h2 class="section-title" style="margin:0">오늘의 브리핑</h2><span class="news-status" id="brief-status"></span></div>
+      <div class="brief-box" id="brief-box"><div class="loading">국내·해외 기사를 모아 5꼭지로 요약하고 있어요</div></div>
+    </section>
+    <section class="section">
+      <div class="news-head"><h2 class="section-title" style="margin:0">텔레그램 이미지 스크랩</h2><span class="news-status" id="tg-status"></span></div>
+      <div class="tg-controls">
+        <input id="tg-channels" type="text" placeholder="공개 채널명 (쉼표로 구분, 예: wowtv_official, FastStockNews) · 비우면 기본 채널">
+        <button id="tg-apply">적용</button>
+      </div>
+      <p class="tg-hint">t.me/s/채널명 공개 미리보기에서 이미지가 포함된 포스트만 모아 날짜별로 보여줘요. 원하는 스크랩 채널을 찾으면 여기에 추가해 주세요.</p>
+      <div id="tg-sections"></div>
+    </section>
+    <section class="section">
+      <div class="news-head"><h2 class="section-title" style="margin:0">오늘의 경제 뉴스</h2><span class="news-status" id="rss-status"></span></div>
+      <nav class="subtabs">
+        <button class="subtab-btn active" data-subtab="news-kr">국내</button>
+        <button class="subtab-btn" data-subtab="news-global">해외</button>
+      </nav>
+      <div id="sub-news-kr"><div class="news-grid" id="rss-grid-kr"></div></div>
+      <div id="sub-news-global" hidden><div class="news-grid" id="rss-grid-global"></div></div>
+    </section>
+  </div>
+
+  <div id="page-portfolio" hidden>
+  <section class="section" style="margin-top:0">
+    <div class="news-head"><h2 class="section-title" style="margin:0">내 포트폴리오</h2><span class="news-status" id="pf-status"></span></div>
+    <p class="tg-hint">종목명(영문) 또는 티커(예: 005930.KS, NVDA, AAPL, 000660.KS)를 입력해 추가해 주세요. 목록은 이 브라우저에 저장돼요(계정 없이 기기별로 보관).</p>
+    <div class="pf-add">
+      <div class="pf-search">
+        <input id="pf-input" type="text" placeholder="티커 또는 종목명 검색 후 Enter" autocomplete="off">
+        <div id="pf-results" class="pf-results" hidden></div>
+      </div>
+      <button id="pf-add-btn" class="scenario-btn">추가하기</button>
+    </div>
+    <div class="toolbar">
+      <div id="pf-range" class="range-selector"></div>
+      <nav class="subtabs" id="pf-view" style="margin:0">
+        <button class="subtab-btn active" data-view="cards">개별 차트</button>
+        <button class="subtab-btn" data-view="combined">한 그래프에 비교</button>
+        <button class="subtab-btn" data-view="weighted">비중 반영 합산</button>
+      </nav>
+    </div>
+    <div class="grid" id="pf-grid"></div>
+    <div class="card" id="pf-combined" hidden style="padding:20px 20px 14px"></div>
+    <div class="card" id="pf-weighted" hidden style="padding:20px 20px 14px"></div>
+    <div class="tg-empty" id="pf-empty" hidden>아직 추가한 종목이 없어요. 위에서 티커를 검색해 추가해 주세요.</div>
+  </section>
+  </div>
+</div>
+
+<div id="era-modal" class="viz-root" hidden>
+  <div class="era-card">
+    <div class="era-head">
+      <div>
+        <div class="era-title" id="era-title"></div>
+        <div class="era-meta" id="era-meta"></div>
+      </div>
+      <button class="era-close" data-close>닫기</button>
+    </div>
+    <div class="era-body" id="era-body"></div>
+    <div class="era-sources" id="era-sources"></div>
+  </div>
+</div>
+
+<div id="lightbox" class="viz-root" hidden>
+  <div class="lb-bar"><a id="lightbox-link" target="_blank" rel="noopener">원문 열기</a><button data-close>닫기</button></div>
+  <img id="lightbox-img" alt="">
+</div>
+
+<div class="viz-root">
+  <button id="chat-toggle" title="AI 채팅 열기" aria-label="AI 채팅 열기">💬</button>
+  <div id="chat-panel" hidden>
+    <div id="chat-header">
+      <span>AI 채팅</span>
+      <span class="status" id="chat-status"></span>
+    </div>
+    <div id="chat-messages"></div>
+    <div id="chat-input-row">
+      <textarea id="chat-input" rows="1" placeholder="메시지를 입력해 주세요"></textarea>
+      <button id="chat-send">보내기</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script src="chat.js"></script>
+<script src="news.js"></script>
+<script src="drawdown.js"></script>
+<script src="portfolio.js"></script>
+</body>
+</html>

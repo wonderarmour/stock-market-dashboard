@@ -1,0 +1,21 @@
+# systemd unit for the market dashboard (Linux).
+# 1) User= 와 WorkingDirectory= 를 본인 환경에 맞게 고쳐요.
+# 2) sudo cp market-dashboard.service /etc/systemd/system/
+# 3) sudo systemctl daemon-reload && sudo systemctl enable --now market-dashboard
+[Unit]
+Description=Market dashboard (Node.js)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/apps/side_prj
+EnvironmentFile=/home/ubuntu/apps/side_prj/.env
+ExecStart=/usr/bin/env node server.js
+Restart=on-failure
+RestartSec=5
+# 로그: journalctl -u market-dashboard -f
+
+[Install]
+WantedBy=multi-user.target
