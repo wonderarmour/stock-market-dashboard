@@ -1,0 +1,7 @@
+# /etc/caddy/Caddyfile 예시 — gcp-setup.sh 가 자동 생성하지만 손으로 쓸 때 참고.
+# 호스트명은 VM 외부 IP 기반 sslip.io 주소(예: 34-64-1-2.sslip.io) 또는 본인 도메인.
+# Caddy 가 Let's Encrypt 인증서를 자동 발급·갱신해요 (80/443 포트가 열려 있어야 함).
+34-64-1-2.sslip.io {
+    reverse_proxy 127.0.0.1:3000
+    encode gzip
+}

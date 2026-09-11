@@ -144,6 +144,8 @@ side_prj/
 ├─ start.bat                # Windows 실행 스크립트
 ├─ start.sh                 # Linux/macOS 실행 스크립트
 ├─ market-dashboard.service # Linux systemd 서비스 예시
+├─ deploy/gcp-setup.sh      # GCP/우분투 VM 원클릭 설정 (12장)
+├─ deploy/Caddyfile         # HTTPS 리버스 프록시 예시
 └─ server.log               # 백그라운드 실행 시 로그
 ```
 
@@ -160,6 +162,10 @@ side_prj/
 | `TELEGRAM_CHAT_ID` | 아니오 | 알림을 받을 채팅 ID (10장) |
 | `KAKAO_REST_KEY` | 아니오 | 카카오톡 "나에게 보내기" 알림용 REST API 키 (11장) |
 | `KAKAO_CLIENT_SECRET` | 아니오 | 카카오 앱에서 Client Secret 을 켠 경우에만 |
+| `KAKAO_LINK_URL` | 아니오 | 카카오 메시지 버튼 링크. 기본은 `PUBLIC_URL` → GitHub 저장소 순 |
+| `APP_PASSWORD` | 외부 공개 시 **예** | 설정하면 모든 화면·API에 비밀번호 로그인이 걸려요 (`/login`, `/logout`). 로컬 전용이면 비워 두기 |
+| `SESSION_SECRET` | 아니오 | 로그인 쿠키 서명 키. 없으면 `APP_PASSWORD` 로 대체 |
+| `PUBLIC_URL` | 외부 공개 시 **예** | `https://…` 공개 주소. 카카오 리다이렉트 URI·메시지 링크·Secure 쿠키에 사용 |
 
 AI 모델명은 `server.js` 상단 `OPENAI_MODEL` 상수예요 (현재 `gpt-5.6-luna`). `.env` 를 바꾸면 서버를 재시작해야 반영돼요.
 
@@ -274,9 +280,46 @@ AI 모델명은 `server.js` 상단 `OPENAI_MODEL` 상수예요 (현재 `gpt-5.6-
 
 토큰은 `data/kakao.json` 에 저장되고 액세스 토큰(6시간)은 서버가 자동 갱신해요. 리프레시 토큰은 2개월 유효하며 알림이 나갈 때마다 연장되지만, 2개월 넘게 한 번도 알림이 없으면 만료돼 다시 "카카오 연결"이 필요해요. 메시지 본문은 카카오 제한(200자)에 맞춰 요약돼요. 텔레그램과 카카오가 둘 다 설정돼 있으면 두 곳 모두로 보내요.
 
-## 12. 보안 메모
+## 12. 클라우드에 상시 운영하기 (Google Cloud 무료 VM)
+
+집 컴퓨터를 켜 두지 않아도 매일 16:30 점검·알림이 나가게 하려면 항상 켜진 서버가 필요해요. GCP **e2-micro** 는 무료 티어(월 1대, 미국 리전)라 비용 없이 쓸 수 있어요.
+
+### 12-1. VM 만들기 (콘솔, 5분)
+1. https://console.cloud.google.com → 프로젝트 만들기(또는 선택) → **Compute Engine → VM 인스턴스 → 인스턴스 만들기**.
+2. 설정: 이름 `dashboard`, **리전 `us-west1` / `us-central1` / `us-east1` 중 하나**(무료 티어 조건), 머신 유형 **E2 → e2-micro**, 부팅 디스크 **Ubuntu 24.04 LTS, 표준 영구 디스크 30GB 이하**.
+3. **방화벽**: "HTTP 트래픽 허용", "HTTPS 트래픽 허용" 둘 다 체크 → 만들기.
+4. 목록에 뜬 **외부 IP** 를 메모해요. (재시작해도 IP 가 바뀌지 않게 하려면 VPC 네트워크 → IP 주소에서 "고정 IP 로 승격" — VM 에 붙어 있는 동안은 무료예요.)
+
+### 12-2. 서버 설정 (SSH, 10분)
+VM 목록의 **SSH** 버튼을 누르면 브라우저 터미널이 열려요. 거기서:
+```bash
+curl -fsSL https://raw.githubusercontent.com/wonderarmour/stock-market-dashboard/main/deploy/gcp-setup.sh | bash
+```
+스크립트가 Node.js·Caddy 설치, 저장소 clone(`~/side_prj`), `.env` 생성(임의 비밀번호 포함), systemd 등록, HTTPS 프록시까지 한 번에 해요. 도메인이 없어도 **`<외부IP를 -로 바꾼값>.sslip.io`** 주소로 인증서가 자동 발급돼요 (예: IP 34.64.1.2 → `https://34-64-1-2.sslip.io`).
+
+끝나면 안내대로 키를 넣고 재시작해요:
+```bash
+nano ~/side_prj/.env          # OPENAI_API_KEY, KAKAO_REST_KEY, KAKAO_CLIENT_SECRET 입력. APP_PASSWORD 는 원하는 값으로 바꿔도 됨
+sudo systemctl restart market-dashboard
+journalctl -u market-dashboard -n 20   # "Server running ... (public: https://...)" 확인
+```
+
+### 12-3. 카카오 콘솔 갱신
+주소가 localhost 에서 공개 주소로 바뀌었으니 카카오 콘솔에서:
+- **리다이렉트 URI** 에 `https://<주소>/auth/kakao/callback` 추가 (11장 3번 위치)
+- **웹 도메인** 에 `https://<주소>` 추가 (11장 6번 위치)
+그 뒤 브라우저로 `https://<주소>` 접속 → 비밀번호 로그인 → 포트폴리오 → 실제 보유·리밸런싱 → **카카오 연결**(서버가 바뀌었으니 다시 한 번) → **카카오톡으로 보내기** 로 테스트.
+
+### 12-4. 운영
+- 코드 업데이트: `cd ~/side_prj && git pull && sudo systemctl restart market-dashboard`
+- 포트폴리오 데이터: `~/side_prj/data/` (VM 삭제 시 함께 사라지니 가끔 내려받기: `gcloud compute scp dashboard:~/side_prj/data/portfolio.json .` 또는 SSH 창의 다운로드 기능)
+- 로컬 PC 의 포트폴리오를 옮기려면 `data/portfolio.json` 을 VM 의 같은 경로에 올리고 재시작
+- 비용: e2-micro 1대·30GB 디스크·월 1GB 송신은 무료. 고정 IP 는 VM 에 붙어 있을 때만 무료(떼어 두면 과금). 결제 알림(예: 1달러)을 걸어 두면 안심이에요.
+- 로그인 실패가 5번 넘으면 1분간 잠겨요. 비밀번호를 바꾸면 기존 로그인은 모두 풀려요.
+
+## 13. 보안 메모
 
 - `.env` 에는 API 키가 들어 있어요. `.gitignore` 에 포함돼 있지만, 폴더를 압축해 보낼 때는 **`.env` 를 빼고** 보내 주세요.
 - 폴더에 있던 `GPT API key.txt` 는 평문 키 파일이에요. 키는 이미 `.env` 에 있으니 삭제하는 게 안전해요 (`.gitignore` 에도 넣어 뒀어요).
-- 이 서버는 인증이 없어요. 외부 네트워크에 포트를 열지 말고, 원격에서 볼 때는 SSH 터널을 쓰세요.
+- 외부에 공개할 때는 반드시 `APP_PASSWORD` 를 설정하고 HTTPS(12장 Caddy) 뒤에 두세요. 로컬 전용이면 비밀번호 없이 써도 되지만 포트를 외부에 열지 마세요.
 - `data/kakao.json` 에는 카카오 토큰이 들어 있어요. `data/` 는 git 에서 제외되지만, 폴더를 공유할 때 같이 보내지 마세요.

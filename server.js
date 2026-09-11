@@ -2,6 +2,7 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 try {
   process.loadEnvFile(path.join(__dirname, '.env'));
@@ -11,6 +12,39 @@ try {
 
 const PORT = process.env.PORT || 3000;
 const OPENAI_MODEL = 'gpt-5.6-luna';
+// Public base URL when deployed behind HTTPS (e.g. https://34-1-2-3.sslip.io);
+// drives the Kakao redirect URI and the Secure cookie flag.
+const PUBLIC_URL = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
+const BASE_URL = PUBLIC_URL || `http://localhost:${PORT}`;
+
+// ---- password gate (single user). Off when APP_PASSWORD is unset (local use). ----
+const APP_PASSWORD = process.env.APP_PASSWORD || '';
+const SESSION_SECRET = process.env.SESSION_SECRET || APP_PASSWORD;
+const sessionToken = () => crypto.createHmac('sha256', SESSION_SECRET).update('dashboard-session-v1').digest('hex');
+const loginFailures = new Map(); // ip -> { count, until }
+function parseCookies(req) {
+  const out = {};
+  (req.headers.cookie || '').split(';').forEach((p) => { const i = p.indexOf('='); if (i > 0) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim()); });
+  return out;
+}
+function isAuthed(req) {
+  if (!APP_PASSWORD) return true;
+  const c = parseCookies(req).sid || '';
+  const t = sessionToken();
+  return c.length === t.length && crypto.timingSafeEqual(Buffer.from(c), Buffer.from(t));
+}
+function loginPage(error = '') {
+  return `<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>로그인</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<body style="margin:0;background:#fff;font-family:'Pretendard Variable',Pretendard,system-ui,sans-serif;color:oklch(0.234 0.03 254)">
+<form method="post" action="/login" style="max-width:360px;margin:18vh auto;padding:0 24px">
+<h1 style="font-size:24px;font-weight:700;letter-spacing:-.02em;margin:0 0 6px">마켓 대시보드</h1>
+<p style="margin:0 0 20px;color:oklch(0.155 0.06 261/.58);font-size:14px">비밀번호를 입력해 주세요</p>
+<input type="password" name="password" autofocus autocomplete="current-password" placeholder="비밀번호" style="width:100%;box-sizing:border-box;height:48px;border:1px solid oklch(0.913 0.008 247);border-radius:12px;background:oklch(0.957 0.005 247);padding:0 12px;font:inherit;font-size:15px;outline:none">
+${error ? `<p style="color:oklch(0.628 0.218 22);font-size:13px;margin:8px 0 0">${error}</p>` : ''}
+<button style="width:100%;height:48px;margin-top:14px;border:none;border-radius:999px;background:oklch(0.624 0.176 254);color:#fff;font:inherit;font-size:15px;font-weight:600;cursor:pointer">들어가기</button>
+</form></body></html>`;
+}
 
 function fetchJSON(url, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -375,7 +409,7 @@ async function sendTelegram(text) {
 // One-time browser login stores a refresh token in data/kakao.json; access
 // tokens (6h) are refreshed automatically. Text template is capped at 200 chars.
 const KAKAO_FILE = path.join(DATA_DIR, 'kakao.json');
-const kakaoRedirectUri = () => `http://localhost:${PORT}/auth/kakao/callback`;
+const kakaoRedirectUri = () => `${BASE_URL}/auth/kakao/callback`;
 function readKakao() { try { return JSON.parse(fs.readFileSync(KAKAO_FILE, 'utf8')); } catch { return null; } }
 function writeKakao(tok) { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(KAKAO_FILE, JSON.stringify(tok, null, 2), 'utf8'); }
 function postForm(url, fields, headers = {}) {
@@ -424,7 +458,7 @@ async function sendKakao(check) {
   const token = await kakaoAccessToken();
   // Kakao only allows link URLs on domains registered in the app console, and
   // localhost can't be registered — so the button points at a configurable public URL.
-  const linkUrl = process.env.KAKAO_LINK_URL || 'https://github.com/wonderarmour/stock-market-dashboard';
+  const linkUrl = process.env.KAKAO_LINK_URL || PUBLIC_URL || 'https://github.com/wonderarmour/stock-market-dashboard';
   const template = { object_type: 'text', text: kakaoText(check), link: { web_url: linkUrl, mobile_web_url: linkUrl }, button_title: '자세히 보기' };
   const { status, body } = await postForm('https://kapi.kakao.com/v2/api/talk/memo/default/send', { template_object: JSON.stringify(template) }, { Authorization: `Bearer ${token}` });
   if (status >= 400 || (body.result_code != null && body.result_code !== 0)) throw new Error(body.msg || body.error_description || `Kakao HTTP ${status} (code ${body.code ?? body.result_code})`);
@@ -468,6 +502,37 @@ setInterval(() => {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  // ---- auth gate ----
+  if (APP_PASSWORD) {
+    const secure = PUBLIC_URL.startsWith('https://') ? '; Secure' : '';
+    if (url.pathname === '/login') {
+      if (req.method === 'POST') {
+        const ip = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress;
+        const f = loginFailures.get(ip);
+        if (f && f.until > Date.now()) { res.writeHead(429, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(loginPage('잠시 후 다시 시도해 주세요')); return; }
+        const body = new URLSearchParams(await readBody(req));
+        const pw = body.get('password') || '';
+        const ok = pw.length === APP_PASSWORD.length && crypto.timingSafeEqual(Buffer.from(pw), Buffer.from(APP_PASSWORD));
+        if (!ok) {
+          const n = (f?.count || 0) + 1;
+          loginFailures.set(ip, { count: n, until: n >= 5 ? Date.now() + 60 * 1000 : 0 });
+          res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(loginPage('비밀번호가 맞지 않아요')); return;
+        }
+        loginFailures.delete(ip);
+        res.writeHead(302, { 'Set-Cookie': `sid=${sessionToken()}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${secure}`, Location: '/' }); res.end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(loginPage()); return;
+    }
+    if (url.pathname === '/logout') {
+      res.writeHead(302, { 'Set-Cookie': `sid=; Path=/; HttpOnly; Max-Age=0${secure}`, Location: '/login' }); res.end(); return;
+    }
+    if (url.pathname !== '/auth/kakao/callback' && !isAuthed(req)) {
+      if (url.pathname.startsWith('/api/')) { res.writeHead(401, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: '로그인이 필요해요' })); return; }
+      res.writeHead(302, { Location: '/login' }); res.end(); return;
+    }
+  }
 
   if (url.pathname === '/api/quote') {
     const symbol = url.searchParams.get('symbol');
@@ -699,5 +764,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+  console.log(`Server running at http://localhost:${PORT}${PUBLIC_URL ? ` (public: ${PUBLIC_URL})` : ''}`);
+  if (!APP_PASSWORD) console.log('APP_PASSWORD 가 없어서 비밀번호 보호가 꺼져 있어요. 외부에 공개할 때는 반드시 설정하세요.');
 });
