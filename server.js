@@ -285,6 +285,115 @@ async function eraNews({ start, extreme, end, label, direction }) {
   return { summary, sources, grounded, generatedAt: new Date().toISOString() };
 }
 
+// ---- portfolio state (single-user JSON file) + rebalancing check/alerts ----
+const DATA_DIR = path.join(__dirname, 'data');
+const STATE_FILE = path.join(DATA_DIR, 'portfolio.json');
+function readState() {
+  try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return {}; }
+}
+function writeState(state) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const tmp = STATE_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8');
+  fs.renameSync(tmp, STATE_FILE);
+}
+const DEFAULT_RULES = { absBand: 5, relBand: 25, calendarDays: 90, lastRebalancedAt: null };
+
+async function latestPrice(symbol) {
+  const { body } = await fetchJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5d&interval=1d`);
+  const r = body?.chart?.result?.[0];
+  if (!r) throw new Error(body?.chart?.error?.description || '시세 없음');
+  const closes = (r.indicators?.quote?.[0]?.close || []).filter((v) => v != null);
+  const price = r.meta?.regularMarketPrice ?? closes[closes.length - 1];
+  const ts = r.meta?.regularMarketTime ? new Date(r.meta.regularMarketTime * 1000).toISOString() : null;
+  return { price, currency: r.meta?.currency || '', asOf: ts };
+}
+
+// Drift vs. target for every holding; band rule (absolute %p OR relative %)
+// plus a calendar "due for review" rule. Trades bring each holding back to target.
+async function runRebalanceCheck(state) {
+  const holdings = (state.holdings || []).filter((h) => h.symbol && (Number(h.qty) > 0 || Number(h.target) > 0));
+  const rules = { ...DEFAULT_RULES, ...(state.rules || {}) };
+  if (!holdings.length) return { asOf: new Date().toISOString(), rows: [], triggered: false, reasons: ['보유 종목이 없어요'], trades: [], totalValue: 0, rules };
+  const [priced, fx] = await Promise.all([
+    Promise.all(holdings.map(async (h) => {
+      try { return { ...h, ...(await latestPrice(h.symbol)) }; } catch (e) { return { ...h, price: null, error: e.message }; }
+    })),
+    latestPrice('KRW=X').then((r) => r.price).catch(() => null), // USD -> KRW
+  ]);
+  // Values are compared in KRW: USD-priced assets are converted with the live rate.
+  const toKRW = (h) => (h.currency === 'KRW' || !fx ? Number(h.qty) * h.price : Number(h.qty) * h.price * (h.currency === 'USD' ? fx : 1));
+  const ok = priced.filter((h) => h.price != null);
+  const totalValue = ok.reduce((a, h) => a + toKRW(h), 0);
+  const targetSum = ok.reduce((a, h) => a + Number(h.target || 0), 0) || 1;
+  const rows = priced.map((h) => {
+    const value = h.price != null ? Number(h.qty) * h.price : null;
+    const valueKRW = h.price != null ? toKRW(h) : null;
+    const curPct = valueKRW != null && totalValue ? (valueKRW / totalValue) * 100 : null;
+    const target = (Number(h.target || 0) / targetSum) * 100;
+    const drift = curPct != null ? curPct - target : null;
+    const relDrift = drift != null && target ? (drift / target) * 100 : null;
+    const bandHit = drift != null && (Math.abs(drift) >= rules.absBand || (target > 0 && Math.abs(relDrift) >= rules.relBand));
+    return { symbol: h.symbol, label: h.label || h.symbol, qty: Number(h.qty), price: h.price, currency: h.currency, value, valueKRW, curPct, target, drift, relDrift, bandHit, error: h.error || null };
+  });
+  const daysSince = rules.lastRebalancedAt ? Math.floor((Date.now() - new Date(rules.lastRebalancedAt)) / 86400000) : null;
+  const calendarDue = rules.calendarDays > 0 && (daysSince == null || daysSince >= rules.calendarDays);
+  const bandRows = rows.filter((r) => r.bandHit);
+  const reasons = [];
+  bandRows.forEach((r) => reasons.push(`${r.label} 비중 ${r.curPct.toFixed(1)}% (목표 ${r.target.toFixed(1)}%, ${r.drift > 0 ? '+' : ''}${r.drift.toFixed(1)}%p / 상대 ${r.relDrift > 0 ? '+' : ''}${r.relDrift.toFixed(0)}%)`));
+  if (calendarDue) reasons.push(daysSince == null ? `정기 점검 주기(${rules.calendarDays}일) 기준일이 설정되지 않았어요` : `마지막 리밸런싱 후 ${daysSince}일 경과 (주기 ${rules.calendarDays}일)`);
+  const trades = rows.filter((r) => r.value != null).map((r) => {
+    const rate = r.valueKRW && r.value ? r.valueKRW / r.value : 1; // KRW per native unit
+    const targetValue = ((r.target / 100) * totalValue) / rate;
+    const diff = targetValue - r.value;
+    const fractional = /-USD$/.test(r.symbol);
+    const shares = fractional ? Math.round((diff / r.price) * 10000) / 10000 : Math.trunc(diff / r.price);
+    return { symbol: r.symbol, label: r.label, action: diff >= 0 ? 'buy' : 'sell', shares: Math.abs(shares), amount: Math.abs(shares) * r.price, currency: r.currency };
+  }).filter((t) => t.shares > 0);
+  return { asOf: new Date().toISOString(), rows, totalValue, fxUsdKrw: fx, rules, daysSince, calendarDue, bandTriggered: bandRows.length > 0, triggered: bandRows.length > 0 || calendarDue, reasons, trades };
+}
+
+function formatAlert(check) {
+  const lines = [`📊 <b>리밸런싱 점검</b> (${check.asOf.slice(0, 10)})`, check.triggered ? '⚠️ 조정이 필요해요' : '✅ 목표 범위 안이에요'];
+  check.reasons.forEach((r) => lines.push('• ' + r));
+  if (check.trades.length) {
+    lines.push('', '<b>목표 비중으로 돌아가려면</b>');
+    check.trades.forEach((t) => lines.push(`• ${t.label}: ${t.action === 'buy' ? '매수' : '매도'} ${t.shares}${/-USD$/.test(t.symbol) ? '' : '주'} (≈ ${Math.round(t.amount).toLocaleString('ko-KR')} ${t.currency})`));
+  }
+  return lines.join('\n');
+}
+
+async function sendTelegram(text) {
+  const token = process.env.TELEGRAM_BOT_TOKEN, chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) throw new Error('TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 가 .env 에 없어요');
+  const { status, body } = await postJSON(`https://api.telegram.org/bot${token}/sendMessage`, { chat_id: chatId, text, parse_mode: 'HTML' });
+  if (status >= 400 || !body.ok) throw new Error(body.description || `Telegram HTTP ${status}`);
+  return true;
+}
+
+// Daily check at 16:30 KST (after the KRX close), Telegram alert once per day when triggered.
+const CHECK_HOUR_KST = 16, CHECK_MIN_KST = 30;
+function kstNow() { return new Date(Date.now() + 9 * 3600 * 1000); }
+async function scheduledCheck() {
+  const state = readState();
+  const check = await runRebalanceCheck(state);
+  state.lastCheck = check;
+  const today = kstNow().toISOString().slice(0, 10);
+  state.lastScheduledDate = today;
+  if (check.triggered && state.lastAlertDate !== today && process.env.TELEGRAM_BOT_TOKEN) {
+    try { await sendTelegram(formatAlert(check)); state.lastAlertDate = today; state.lastAlertError = null; }
+    catch (e) { state.lastAlertError = e.message; }
+  }
+  writeState(state);
+  return check;
+}
+setInterval(() => {
+  const now = kstNow();
+  if (now.getUTCHours() !== CHECK_HOUR_KST || now.getUTCMinutes() !== CHECK_MIN_KST) return;
+  if (readState().lastScheduledDate === now.toISOString().slice(0, 10)) return;
+  scheduledCheck().catch((e) => console.error('scheduled check failed', e.message));
+}, 60 * 1000);
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -310,6 +419,44 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: e.message }));
     }
+    return;
+  }
+
+  const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+
+  if (url.pathname === '/api/portfolio' && req.method === 'GET') { json(200, readState()); return; }
+  if (url.pathname === '/api/portfolio' && req.method === 'PUT') {
+    try {
+      const patch = JSON.parse((await readBody(req)) || '{}');
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('객체가 필요해요');
+      const state = readState();
+      delete patch.lastCheck; delete patch.lastScheduledDate; delete patch.lastAlertDate; delete patch.lastAlertError;
+      Object.assign(state, patch);
+      writeState(state);
+      json(200, state);
+    } catch (e) { json(400, { error: e.message }); }
+    return;
+  }
+  if (url.pathname === '/api/rebalance-check') {
+    try {
+      const state = readState();
+      const fresh = state.lastCheck && Date.now() - new Date(state.lastCheck.asOf) < 60 * 60 * 1000;
+      if (url.searchParams.get('refresh') === '1' || !fresh) {
+        state.lastCheck = await runRebalanceCheck(state);
+        writeState(state);
+      }
+      json(200, { ...state.lastCheck, telegramConfigured: !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID), lastAlertDate: state.lastAlertDate || null, lastAlertError: state.lastAlertError || null, schedule: `매일 ${CHECK_HOUR_KST}:${String(CHECK_MIN_KST).padStart(2, '0')} KST` });
+    } catch (e) { json(502, { error: e.message }); }
+    return;
+  }
+  if (url.pathname === '/api/rebalance-notify' && req.method === 'POST') {
+    try {
+      const state = readState();
+      const check = state.lastCheck || (await runRebalanceCheck(state));
+      await sendTelegram(formatAlert(check));
+      state.lastAlertDate = kstNow().toISOString().slice(0, 10); state.lastAlertError = null; writeState(state);
+      json(200, { ok: true });
+    } catch (e) { json(502, { error: e.message }); }
     return;
   }
 

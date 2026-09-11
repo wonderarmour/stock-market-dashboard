@@ -1,7 +1,7 @@
-// 포트폴리오 탭: per-browser watchlist (localStorage) rendered with the same
+// 포트폴리오 탭: server-backed watchlist (window.pfStore) rendered with the same
 // card/chart/range machinery as the 시장 tab (globals from app.js).
-(function () {
-  const KEY = 'portfolio-symbols';
+(async function () {
+  const store = await window.pfStore.ready;
   const input = document.getElementById('pf-input');
   const results = document.getElementById('pf-results');
   const addBtn = document.getElementById('pf-add-btn');
@@ -14,12 +14,8 @@
   let range = RANGE_OPTIONS.find((r) => r.key === DEFAULT_RANGE);
   let loadedOnce = false;
 
-  function load() {
-    try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch { return []; }
-  }
-  function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(items)); } catch {}
-  }
+  function load() { return Array.isArray(store.get('symbols')) ? store.get('symbols') : []; }
+  function save() { store.set('symbols', items); }
 
   RANGE_OPTIONS.forEach((opt) => {
     const b = document.createElement('button');
@@ -76,8 +72,7 @@
   // Combined view: every series indexed to 0% at the start of the range so
   // different price scales share one axis (never a dual-axis chart).
   const PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
-  const HIDDEN_KEY = 'portfolio-hidden';
-  let hidden = new Set((() => { try { return JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]'); } catch { return []; } })());
+  let hidden = new Set(Array.isArray(store.get('hidden')) ? store.get('hidden') : []);
   // opts.normalize (default true): plot % change from each series' first point.
   // normalize:false plots the raw values (already in %), used by the rolling charts.
   function renderCombined(rows, container = combined, opts = {}) {
@@ -150,16 +145,15 @@
     container.querySelectorAll('.pf-chip[data-symbol]').forEach((chip) => chip.addEventListener('click', () => {
       const s = chip.dataset.symbol;
       if (hidden.has(s)) hidden.delete(s); else hidden.add(s);
-      try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hidden])); } catch {}
+      store.set('hidden', [...hidden]);
       renderAll();
     }));
   }
   // ---- weighted portfolio view: constant initial weights (buy & hold from the
   // range start), each series forward-filled onto the union of trading dates.
   const weighted = document.getElementById('pf-weighted');
-  const W_KEY = 'portfolio-weights';
-  let weights = (() => { try { return JSON.parse(localStorage.getItem(W_KEY) || '{}'); } catch { return {}; } })();
-  function saveWeights() { try { localStorage.setItem(W_KEY, JSON.stringify(weights)); } catch {} }
+  let weights = store.get('weights') && typeof store.get('weights') === 'object' ? store.get('weights') : {};
+  function saveWeights() { store.set('weights', weights); }
   function currentWeights(valid) {
     const w = {};
     valid.forEach((r) => { const v = parseFloat(weights[r.item.symbol]); w[r.item.symbol] = Number.isFinite(v) && v >= 0 ? v : 100 / valid.length; });
@@ -230,9 +224,8 @@
   // ---- rolling (sliding-window) metrics: return / max drawdown / volatility
   // recomputed at every point over the trailing window, for the current input
   // and every saved combo.
-  const ROLL_KEY = 'portfolio-rolling-window';
   const ROLL_WINDOWS = [{ days: 30, label: '1개월' }, { days: 90, label: '3개월' }, { days: 180, label: '6개월' }, { days: 365, label: '1년' }];
-  let rollDays = (() => { const v = parseInt(localStorage.getItem(ROLL_KEY), 10); return ROLL_WINDOWS.some((x) => x.days === v) ? v : 90; })();
+  let rollDays = (() => { const v = parseInt(store.get('rollingWindow'), 10); return ROLL_WINDOWS.some((x) => x.days === v) ? v : 90; })();
   function rollingMetrics(pts, windowDays) {
     const ms = windowDays * 86400000;
     const ts = pts.map((p) => new Date(p.date).getTime());
@@ -254,8 +247,7 @@
     }
     return { ret, mdd, vol };
   }
-  const ROLL_SCOPE_KEY = 'portfolio-rolling-scope';
-  let rollScope = (() => { const v = localStorage.getItem(ROLL_SCOPE_KEY); return ['all', 'combos', 'symbols'].includes(v) ? v : 'all'; })();
+  let rollScope = (() => { const v = store.get('rollingScope'); return ['all', 'combos', 'symbols'].includes(v) ? v : 'all'; })();
   function renderRolling(valid, cur) {
     const box = document.getElementById('pf-rolling');
     const comboRows = comboList(valid, cur).filter((c) => c.series).map((c) => ({ name: c.name, id: c.id, series: c.series }));
@@ -276,20 +268,19 @@
   function bindRolling(valid, cur) {
     document.querySelectorAll('#pf-rolling [data-roll]').forEach((b) => b.addEventListener('click', () => {
       rollDays = +b.dataset.roll;
-      try { localStorage.setItem(ROLL_KEY, String(rollDays)); } catch {}
+      store.set('rollingWindow', rollDays);
       renderRolling(valid, cur);
     }));
     document.querySelectorAll('#pf-rolling [data-roll-scope]').forEach((b) => b.addEventListener('click', () => {
       rollScope = b.dataset.rollScope;
-      try { localStorage.setItem(ROLL_SCOPE_KEY, rollScope); } catch {}
+      store.set('rollingScope', rollScope);
       renderRolling(valid, cur);
     }));
   }
 
   // ---- weight-combination comparison: current input + user-saved combos, side by side.
-  const C_KEY = 'portfolio-combos';
-  let combos = (() => { try { return JSON.parse(localStorage.getItem(C_KEY) || '[]'); } catch { return []; } })();
-  function saveCombos() { try { localStorage.setItem(C_KEY, JSON.stringify(combos)); } catch {} }
+  let combos = Array.isArray(store.get('combos')) ? store.get('combos') : [];
+  function saveCombos() { store.set('combos', combos); }
   function comboList(valid, cur) {
     const syms = valid.map((r) => r.item.symbol);
     const list = [{ name: '현재 입력', weights: cur, kind: 'current' }];
@@ -378,7 +369,8 @@
   async function renderAll() {
     grid.innerHTML = ''; combined.innerHTML = ''; weighted.innerHTML = '';
     empty.hidden = items.length > 0;
-    grid.hidden = view !== 'cards'; combined.hidden = view !== 'combined'; weighted.hidden = view !== 'weighted';
+    grid.hidden = view !== 'cards'; combined.hidden = view !== 'combined'; weighted.hidden = view !== 'weighted'; holdingsEl.hidden = view !== 'holdings';
+    if (view === 'holdings') { renderHoldings(); status.textContent = items.length ? `${items.length}종목` : ''; return; }
     status.textContent = items.length ? `${items.length}종목 · 최근 ${range.label} · 불러오는 중...` : '';
     const rows = await Promise.all(items.map(async (item) => ({ item, data: await getSeries(item) })));
     status.textContent = items.length ? `${items.length}종목 · 최근 ${range.label}` : '';
@@ -437,6 +429,110 @@
   });
   addBtn.addEventListener('click', () => addSymbol(input.value));
   document.addEventListener('click', (e) => { if (!e.target.closest('.pf-search')) results.hidden = true; });
+
+  // ---- 실제 보유 & 리밸런싱: holdings (qty + target %) live on the server so the
+  // daily check can run without a browser open. ----
+  const holdingsEl = document.getElementById('pf-holdings');
+  const DEFAULT_RULES = { absBand: 5, relBand: 25, calendarDays: 90, lastRebalancedAt: null };
+  function getHoldings() { const h = store.get('holdings'); return Array.isArray(h) ? h : []; }
+  function getRules() { return { ...DEFAULT_RULES, ...(store.get('rules') || {}) }; }
+  const fmtMoney = (v, cur) => (v == null ? '-' : `${Math.round(v).toLocaleString('ko-KR')} ${cur || ''}`.trim());
+  const fmtPct = (v, d = 1) => (v == null ? '-' : `${v >= 0 ? '+' : ''}${v.toFixed(d)}%`);
+
+  function renderHoldings() {
+    const bySym = Object.fromEntries(getHoldings().map((h) => [h.symbol, h]));
+    const rules = getRules();
+    const rows = items.map((it) => {
+      const h = bySym[it.symbol] || {};
+      return `<tr data-symbol="${it.symbol}" data-label="${it.label.replace(/"/g, '&quot;')}"><td><b>${it.label}</b><div class="meta">${it.symbol}</div></td>
+        <td><input type="number" min="0" step="any" class="h-qty" value="${h.qty ?? ''}" placeholder="0"></td>
+        <td><input type="number" min="0" step="1" class="h-target" value="${h.target ?? ''}" placeholder="0"> %</td></tr>`;
+    }).join('');
+    const targetSum = items.reduce((a, it) => a + Number(bySym[it.symbol]?.target || 0), 0);
+    holdingsEl.innerHTML = `
+      <p class="tg-hint" style="margin:0 0 12px">보유 수량과 목표 비중을 입력하고 저장하면, 서버가 매일 장 마감 후 현재가로 비중을 다시 계산해 리밸런싱이 필요한지 점검해요. 필요하면 텔레그램으로 알려 주고 탭에 빨간 점이 켜져요. 종목은 위 검색창에서 추가해 주세요.</p>
+      <div class="table-wrap"><table class="pf-table pf-hold-table"><thead><tr><th>종목</th><th>보유 수량</th><th>목표 비중</th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="meta">종목을 먼저 추가해 주세요</td></tr>'}</tbody></table></div>
+      <div class="pf-wfoot" style="margin:10px 0 18px"><span class="meta">목표 비중 합계 <b id="h-sum">${targetSum.toFixed(0)}</b>% (100이 아니어도 비율로 맞춰요)</span><button type="button" class="pf-mini" id="h-equal">동일 목표비중</button></div>
+      <h3 class="pf-roll-title" style="margin-top:0">리밸런싱 기준</h3>
+      <div class="pf-rules">
+        <label>절대 밴드 <input type="number" min="0" step="0.5" id="r-abs" value="${rules.absBand}"> %p</label>
+        <label>상대 밴드 <input type="number" min="0" step="1" id="r-rel" value="${rules.relBand}"> %</label>
+        <label>정기 점검 <input type="number" min="0" step="1" id="r-cal" value="${rules.calendarDays}"> 일마다</label>
+        <label>마지막 리밸런싱 <input type="date" id="r-last" value="${rules.lastRebalancedAt ? rules.lastRebalancedAt.slice(0, 10) : ''}"></label>
+        <button type="button" class="pf-mini" id="r-today">오늘 리밸런싱 완료</button>
+      </div>
+      <p class="tg-hint" style="margin:6px 0 14px">목표 대비 <b>절대 밴드(%p)</b> 또는 <b>상대 밴드(목표 비중의 %)</b> 중 하나라도 넘으면 조정 신호예요. 정기 점검은 마지막 리밸런싱 후 정해진 일수가 지나면 알려 줘요(0이면 끄기). 업계에서 흔한 기본값은 5%p / 25% / 90일이에요.</p>
+      <div class="pf-wfoot"><button type="button" class="scenario-btn" id="h-save">저장하고 지금 점검하기</button><button type="button" class="pf-mini" id="h-notify">텔레그램으로 보내기</button><span class="meta" id="h-status"></span></div>
+      <div id="h-result"></div>`;
+
+    holdingsEl.querySelector('#h-equal').addEventListener('click', () => {
+      const n = items.length || 1;
+      holdingsEl.querySelectorAll('.h-target').forEach((el) => { el.value = (100 / n).toFixed(1); });
+      updateTargetSum();
+    });
+    holdingsEl.querySelectorAll('.h-target').forEach((el) => el.addEventListener('input', updateTargetSum));
+    holdingsEl.querySelector('#r-today').addEventListener('click', () => { holdingsEl.querySelector('#r-last').value = new Date().toISOString().slice(0, 10); });
+    holdingsEl.querySelector('#h-save').addEventListener('click', async () => {
+      saveHoldingsForm();
+      updateTargetSum();
+      await store.flush();
+      loadCheck(true);
+    });
+    holdingsEl.querySelector('#h-notify').addEventListener('click', async () => {
+      const st = holdingsEl.querySelector('#h-status');
+      st.textContent = '텔레그램으로 보내는 중...';
+      try {
+        const res = await fetch('/api/rebalance-notify', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        st.textContent = '텔레그램으로 보냈어요';
+      } catch (e) { st.textContent = `전송 실패: ${e.message}`; }
+    });
+    loadCheck(false);
+  }
+  function updateTargetSum() {
+    const sum = [...holdingsEl.querySelectorAll('.h-target')].reduce((a, el) => a + (parseFloat(el.value) || 0), 0);
+    holdingsEl.querySelector('#h-sum').textContent = sum.toFixed(0);
+  }
+  function saveHoldingsForm() {
+    const holdings = [...holdingsEl.querySelectorAll('tr[data-symbol]')].map((tr) => ({
+      symbol: tr.dataset.symbol, label: tr.dataset.label,
+      qty: parseFloat(tr.querySelector('.h-qty').value) || 0, target: parseFloat(tr.querySelector('.h-target').value) || 0,
+    }));
+    const last = holdingsEl.querySelector('#r-last').value;
+    store.set('holdings', holdings);
+    store.set('rules', {
+      absBand: parseFloat(holdingsEl.querySelector('#r-abs').value) || 0,
+      relBand: parseFloat(holdingsEl.querySelector('#r-rel').value) || 0,
+      calendarDays: parseInt(holdingsEl.querySelector('#r-cal').value, 10) || 0,
+      lastRebalancedAt: last ? new Date(last + 'T00:00:00').toISOString() : null,
+    });
+  }
+  async function loadCheck(refresh) {
+    const out = holdingsEl.querySelector('#h-result'), st = holdingsEl.querySelector('#h-status');
+    if (!out) return;
+    st.textContent = refresh ? '현재가를 받아 점검하는 중...' : '';
+    try {
+      const res = await fetch('/api/rebalance-check' + (refresh ? '?refresh=1' : ''));
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      st.textContent = '';
+      renderCheck(data);
+      window.setRebalanceBadge && window.setRebalanceBadge(data);
+    } catch (e) { st.textContent = `점검 실패: ${e.message}`; }
+  }
+  function renderCheck(d) {
+    const out = holdingsEl.querySelector('#h-result');
+    if (!d.rows || !d.rows.length) { out.innerHTML = `<div class="tg-empty">${(d.reasons || []).join(' ') || '보유 정보를 저장하면 점검 결과가 여기에 나와요'}</div>`; return; }
+    const banner = `<div class="h-banner ${d.triggered ? 'warn' : 'ok'}"><b>${d.triggered ? '리밸런싱 점검이 필요해요' : '목표 범위 안에 있어요'}</b>${d.reasons.length ? '<ul>' + d.reasons.map((r) => `<li>${r}</li>`).join('') + '</ul>' : ''}</div>`;
+    const rows = d.rows.map((r) => `<tr class="${r.bandHit ? 'hit' : ''}"><td><b>${r.label}</b><div class="meta">${r.symbol}</div></td><td>${r.error ? `<span class="meta">${r.error}</span>` : fmtMoney(r.price, r.currency)}</td><td>${fmtMoney(r.valueKRW ?? r.value, r.valueKRW != null ? 'KRW' : r.currency)}</td><td>${r.curPct == null ? '-' : r.curPct.toFixed(1) + '%'}</td><td>${r.target.toFixed(1)}%</td><td class="${r.drift > 0 ? 'up' : r.drift < 0 ? 'down' : ''}">${fmtPct(r.drift)}p <span class="meta">(${fmtPct(r.relDrift, 0)})</span></td><td>${r.bandHit ? '<span class="h-flag">조정</span>' : '<span class="meta">유지</span>'}</td></tr>`).join('');
+    const trades = d.trades.length ? `<h3 class="pf-roll-title">목표 비중으로 돌아가려면</h3><ul class="h-trades">${d.trades.map((t) => `<li><b>${t.label}</b> ${t.action === 'buy' ? '<span class="up">매수</span>' : '<span class="down">매도</span>'} ${t.shares}${/-USD$/.test(t.symbol) ? '' : '주'} <span class="meta">≈ ${fmtMoney(t.amount, t.currency)}</span></li>`).join('')}</ul>` : '';
+    const tg = d.telegramConfigured
+      ? `텔레그램 알림 켜짐 · ${d.schedule} 자동 점검${d.lastAlertDate ? ` · 마지막 알림 ${d.lastAlertDate}` : ''}${d.lastAlertError ? ` · 최근 전송 오류: ${d.lastAlertError}` : ''}`
+      : `텔레그램 알림이 꺼져 있어요. .env 에 TELEGRAM_BOT_TOKEN 과 TELEGRAM_CHAT_ID 를 넣고 서버를 재시작하면 ${d.schedule}에 자동으로 알려 줘요. (앱 내 빨간 점 배지는 지금도 동작해요)`;
+    out.innerHTML = banner + `<div class="table-wrap"><table class="pf-table"><thead><tr><th>종목</th><th>현재가</th><th>평가액</th><th>현재 비중</th><th>목표</th><th>드리프트</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="meta" style="margin:8px 0">총 평가액 ${fmtMoney(d.totalValue, 'KRW')}${d.fxUsdKrw ? ` (달러 자산은 ${d.fxUsdKrw.toFixed(1)}원/달러로 환산)` : ''} · ${new Date(d.asOf).toLocaleString('ko-KR')} 기준${d.daysSince != null ? ` · 마지막 리밸런싱 후 ${d.daysSince}일` : ''}</div>` + trades + `<div class="tg-hint" style="margin:12px 0 0">${tg}</div>`;
+  }
 
   document.querySelector('.tab-btn[data-tab="portfolio"]').addEventListener('click', () => {
     if (!loadedOnce) { loadedOnce = true; renderAll(); }

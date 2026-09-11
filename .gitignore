@@ -1,5 +1,6 @@
 .env
 *.log
+data/
 node_modules/
 GPT API key.txt
 .DS_Store

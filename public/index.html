@@ -316,6 +316,20 @@
   .pf-tip { transform: none; white-space: nowrap; line-height: 1.5; text-align: left; }
   .pf-tip .meta { color: white; opacity: 0.7; }
 
+  .badge-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--red-500); margin-left: 6px; vertical-align: 2px; }
+  .pf-hold-table input { height: 36px; width: 110px; border: 1px solid var(--gridline); border-radius: 10px; background: var(--chip-bg); color: var(--text-primary); font-size: 14px; font-weight: 600; padding: 0 10px; text-align: right; font-variant-numeric: tabular-nums; }
+  .pf-rules { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 8px; }
+  .pf-rules label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+  .pf-rules input { height: 36px; width: 84px; border: 1px solid var(--gridline); border-radius: 10px; background: var(--chip-bg); color: var(--text-primary); font-size: 14px; font-weight: 600; padding: 0 10px; text-align: right; }
+  .pf-rules input[type=date] { width: 150px; text-align: left; }
+  .h-banner { border-radius: var(--r-l); padding: 12px 16px; margin: 14px 0 12px; font-size: 15px; }
+  .h-banner.ok { background: var(--toss-blue-soft); color: var(--text-primary); }
+  .h-banner.warn { background: oklch(0.96 0.03 22); color: var(--text-primary); border: 1px solid oklch(0.85 0.09 22); }
+  .h-banner ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--text-secondary); }
+  .h-flag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: oklch(0.94 0.04 18); color: var(--red-500); font-size: 12px; font-weight: 600; }
+  .pf-table tr.hit td { background: oklch(0.985 0.01 22); }
+  .h-trades { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.7; }
+  .h-trades .up { color: var(--up); font-weight: 600; } .h-trades .down { color: var(--down); font-weight: 600; }
   .analog-box:empty { display: none; }
   .analog-box { background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-3xl); padding: 20px 24px; margin-bottom: 16px; }
   .analog-title { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-bottom: 4px; letter-spacing: 0; }
@@ -517,11 +531,13 @@
         <button class="subtab-btn active" data-view="cards">개별 차트</button>
         <button class="subtab-btn" data-view="combined">한 그래프에 비교</button>
         <button class="subtab-btn" data-view="weighted">비중 반영 합산</button>
+        <button class="subtab-btn" data-view="holdings">실제 보유·리밸런싱</button>
       </nav>
     </div>
     <div class="grid" id="pf-grid"></div>
     <div class="card" id="pf-combined" hidden style="padding:20px 20px 14px"></div>
     <div class="card" id="pf-weighted" hidden style="padding:20px 20px 14px"></div>
+    <div class="card" id="pf-holdings" hidden style="padding:20px 20px 16px"></div>
     <div class="tg-empty" id="pf-empty" hidden>아직 추가한 종목이 없어요. 위에서 티커를 검색해 추가해 주세요.</div>
   </section>
   </div>
@@ -565,6 +581,7 @@
 <script src="chat.js"></script>
 <script src="news.js"></script>
 <script src="drawdown.js"></script>
+<script src="store.js"></script>
 <script src="portfolio.js"></script>
 </body>
 </html>
