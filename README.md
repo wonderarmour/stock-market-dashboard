@@ -293,9 +293,13 @@ AI 모델명은 `server.js` 상단 `OPENAI_MODEL` 상수예요 (현재 `gpt-5.6-
 ### 12-2. 서버 설정 (SSH, 10분)
 VM 목록의 **SSH** 버튼을 누르면 브라우저 터미널이 열려요. 거기서:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wonderarmour/stock-market-dashboard/main/deploy/gcp-setup.sh | bash
+sudo apt-get update -y && sudo apt-get install -y git
+git clone https://github.com/wonderarmour/stock-market-dashboard.git ~/side_prj
+bash ~/side_prj/deploy/gcp-setup.sh
 ```
-스크립트가 Node.js·Caddy 설치, 저장소 clone(`~/side_prj`), `.env` 생성(임의 비밀번호 포함), systemd 등록, HTTPS 프록시까지 한 번에 해요. 도메인이 없어도 **`<외부IP를 -로 바꾼값>.sslip.io`** 주소로 인증서가 자동 발급돼요 (예: IP 34.64.1.2 → `https://34-64-1-2.sslip.io`).
+저장소가 **Private** 이면 `git clone` 이 Username 과 Password 를 물어요 — Password 자리에는 GitHub 비밀번호가 아니라 **Personal Access Token** 을 넣어요 (GitHub → Settings → Developer settings → Personal access tokens → Fine-grained → 이 저장소만, Contents: Read-only). 저장소를 Public 으로 바꾸면 토큰 없이 clone 돼요(코드에 키는 없어요).
+
+스크립트가 Node.js·Caddy 설치, `.env` 생성(임의 비밀번호 포함), systemd 등록, HTTPS 프록시까지 한 번에 해요. 도메인이 없어도 **`<외부IP를 -로 바꾼값>.sslip.io`** 주소로 인증서가 자동 발급돼요 (예: IP 34.64.1.2 → `https://34-64-1-2.sslip.io`).
 
 끝나면 안내대로 키를 넣고 재시작해요:
 ```bash

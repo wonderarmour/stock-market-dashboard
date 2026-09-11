@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # GCP(우분투 VM) 최초 설정 스크립트 — README 12장 참고.
-# 사용: curl -fsSL https://raw.githubusercontent.com/wonderarmour/stock-market-dashboard/main/deploy/gcp-setup.sh | bash
-#   또는 저장소를 clone 한 뒤: bash deploy/gcp-setup.sh
-# 하는 일: Node.js LTS + Caddy 설치, 저장소 clone(~/side_prj), .env 템플릿 생성, systemd 서비스 등록, Caddy 리버스 프록시(HTTPS) 설정.
+# 사용: git clone <저장소> ~/side_prj && bash ~/side_prj/deploy/gcp-setup.sh
+#   (저장소가 Private 이면 clone 때 GitHub Personal Access Token 을 비밀번호 대신 입력)
+# 하는 일: Node.js LTS + Caddy 설치, 저장소 최신화, .env 템플릿 생성, systemd 서비스 등록, Caddy 리버스 프록시(HTTPS) 설정.
 set -euo pipefail
 
 REPO="${REPO:-https://github.com/wonderarmour/stock-market-dashboard.git}"
